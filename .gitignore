@@ -1,0 +1,43 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === Entornos virtuales ===
+venv/
+env/
+ENV/
+.venv/
+
+# === Streamlit ===
+.streamlit/secrets.toml
+
+# === IDEs ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# === Archivos de datos ===
+# Los archivos del CRM y extractos bancarios contienen datos sensibles.
+# Nunca deben subirse al repositorio.
+*.xls
+*.xlsx
+*.csv
+!requirements.txt
+
+# === Outputs temporales ===
+/tmp/
+*.tmp
+*.bak
+
+# === Logs ===
+*.log
