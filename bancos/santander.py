@@ -139,34 +139,46 @@ class Santander(Banco):
     # -----------------------------------------------------------------
     def pasadas_matching_especificas(self, crm, banco, matches):
         """
-        Corre las 3 pasadas específicas de Santander:
+        Corre las pasadas específicas de Santander en orden:
             1. COMEX (COB.IMPORT ↔ Op X + Proveedores)
             2. Certificaciones (CO.CERT.VA ↔ - Proveedores por monto exacto)
             3. Préstamo (DEBITOS COBRO DE PRESTAMO ↔ 2 asientos CRM)
+            4. Agrupaciones día+suma (sueldos, transferencias, TR SNP):
+               varios movimientos del banco del mismo día que suman un
+               asiento único del CRM.
+            5. Cheques clearing / asientos de movimientos bancarios por
+               monto exacto (con tolerancia de fecha).
         """
         _pasada_comex(crm, banco, matches)
         _pasada_certificaciones(crm, banco, matches)
         _pasada_prestamo(crm, banco, matches)
+        _pasada_agrupaciones_dia(crm, banco, matches)
+        _pasada_cheques_clearing(crm, banco, matches)
 
     # -----------------------------------------------------------------
     # AJUSTES SUGERIDOS
     # -----------------------------------------------------------------
     def calcular_ajustes_sugeridos(self, discrepancias, banco_df=None, crm_df=None):
         """
-        Por ahora Santander no tiene ajustes automáticos sugeridos.
+        Detecta ajustes automáticos para Santander:
 
-        A diferencia de BBVA, en Santander las conciliaciones oficiales de
-        Caro (febrero, marzo y abril 2026 validadas) muestran que casi no
-        hay ajustes automáticos:
-            - No hay "Payway" (Santander no maneja esa integración)
-            - No hay "Liq-TC pendiente" (los cupones se acreditan directo)
-            - No hay "Dif gs bancarios" como concepto separado (los gastos
-              ya vienen agrupados en el CRM en un único asiento fin de mes)
+        1. COMEX pendiente de contabilización: operaciones COB.IMPORT que el
+           banco ya procesó pero cuyo asiento Op X todavía NO está cargado en
+           el CRM. Es un desfase de timing normal en importaciones: la
+           operación se registra en el CRM el mes siguiente cuando llega la
+           documentación.
 
-        Cuando aparezcan casos que requieran ajustes automáticos, se
-        agregan acá.
+           A diferencia de BBVA (que tiene Payway, Liq Master, Dif gs
+           bancarios), en Santander este suele ser el único ajuste automático
+           relevante, y solo aparece en meses con importaciones sin cerrar.
         """
-        return []
+        sugeridos = []
+
+        sug = _detectar_comex_pendiente(banco_df, crm_df)
+        if sug:
+            sugeridos.append(sug)
+
+        return sugeridos
 
     # -----------------------------------------------------------------
     # POSIBLES RECIBOS HUÉRFANOS PARA REVISIÓN MANUAL
@@ -683,3 +695,280 @@ def _pasada_prestamo(crm, banco, matches):
     if matcheados_count > 0:
         print(f"  → PRÉSTAMO: {matcheados_count} cuotas matcheadas")
 
+
+
+# =====================================================================
+# MATCHING: AGRUPACIONES DÍA + SUMA
+# =====================================================================
+def _pasada_agrupaciones_dia(crm, banco, matches):
+    """
+    Matchea casos donde el banco tiene VARIOS movimientos del mismo día
+    y el mismo tipo, que juntos suman UN asiento único del CRM.
+
+    Patrones cubiertos (todos siguen la misma mecánica N banco → 1 CRM):
+
+      - SUELDOS: el banco emite un pago por empleado ("SUELDOS ####### PAGO
+        HABERES"), el CRM lo agrupa en un asiento único "Op X ... Otros Pagos".
+
+      - TR SNP MIN: pagos "TR SNP MIN ####### PAGO CCI" desagregados en el
+        banco, agrupados en un asiento del CRM.
+
+      - TRANSFERENCIAS ENTRE CUENTAS PROPIAS: varias "TRF ... MISMO TITULAR"
+        del día en el banco, contra asientos del CRM con contraparte
+        "Banco Santander cta cte" (que a veces vienen sin concepto).
+
+    Para cada grupo del banco (por día + patrón) se busca en el CRM del mismo
+    día (o ±1 día) un movimiento del mismo signo cuyo monto coincida con la
+    suma del grupo. Es tolerante: si no hay match exacto de la suma total,
+    intenta subconjuntos.
+    """
+    import pandas as pd
+
+    # Definición de los patrones: (nombre, regex del banco, signo esperado)
+    patrones = [
+        ("SUELDOS", r"SUELDOS|PAGO HABERES|PAGO DE HABERES", "neg"),
+        ("TR SNP MIN", r"TR SNP MIN", "neg"),
+        ("Transf. mismo titular", r"MISMO TITULAR", "pos"),
+    ]
+
+    next_id = len(matches)
+    total_matcheado = 0
+
+    for nombre_patron, regex, signo in patrones:
+        # Movimientos del banco pendientes que matchean el patrón
+        mask_bco = (
+            (banco["estado"] == "pendiente")
+            & banco["descripcion_orig"].str.contains(regex, regex=True, na=False, case=False)
+        )
+        if signo == "neg":
+            mask_bco = mask_bco & (banco["monto"] < 0)
+        else:
+            mask_bco = mask_bco & (banco["monto"] > 0)
+
+        grupo_banco = banco[mask_bco]
+        if grupo_banco.empty:
+            continue
+
+        # Agrupar por fecha
+        for fecha, movs_dia in grupo_banco.groupby("fecha"):
+            indices_bco = [i for i in movs_dia.index if banco.at[i, "estado"] == "pendiente"]
+            if not indices_bco:
+                continue
+            suma_banco = float(banco.loc[indices_bco, "monto"].sum())
+            if abs(suma_banco) < 0.01:
+                continue
+
+            # Buscar en el CRM un asiento del mismo signo cuyo monto coincida
+            # con la suma del grupo (mismo día o ±2 días).
+            match_crm = _buscar_asiento_crm_para_suma(
+                crm, suma_banco, fecha, dias_tol=2
+            )
+
+            if match_crm is not None:
+                i_crm = match_crm
+                mid = f"M{next_id:04d}"
+                crm.at[i_crm, "match_id"] = mid
+                crm.at[i_crm, "estado"] = "conciliado"
+                for i_bco in indices_bco:
+                    banco.at[i_bco, "match_id"] = mid
+                    banco.at[i_bco, "estado"] = "conciliado"
+
+                matches.append({
+                    "match_id": mid,
+                    "tipo": f"{nombre_patron} ({len(indices_bco)} banco ↔ 1 CRM)",
+                    "confianza": "Alta",
+                    "razon_ia": (
+                        f"Suma de {len(indices_bco)} movimientos '{nombre_patron}' "
+                        f"del banco = {suma_banco:,.2f}, coincide con asiento del CRM."
+                    ),
+                    "i_crm": i_crm,
+                    "i_crm_lista": [i_crm],
+                    "i_bco": indices_bco[0],
+                    "i_bco_lista": indices_bco,
+                    "diferencia_monto": 0.0,
+                    "diferencia_dias": 0,
+                    "es_agrupado": True,
+                    "tipo_agrupado": "N_banco_a_1_crm",
+                })
+                next_id += 1
+                total_matcheado += 1
+
+    if total_matcheado > 0:
+        print(f"  → Agrupaciones día+suma: {total_matcheado} grupos matcheados")
+
+
+def _buscar_asiento_crm_para_suma(crm, suma_objetivo, fecha, dias_tol=2):
+    """
+    Busca en el CRM un asiento pendiente cuyo monto coincida (al céntimo)
+    con `suma_objetivo`, dentro de una ventana de ±dias_tol días respecto
+    de `fecha`. Devuelve el índice o None.
+
+    Prioriza el match del mismo día; si no hay, amplía la ventana.
+    """
+    import pandas as pd
+
+    fecha_ts = pd.Timestamp(fecha)
+
+    # Candidatos del mismo signo y monto coincidente
+    mask = (
+        (crm["estado"] == "pendiente")
+        & ((crm["monto"] - suma_objetivo).abs() < 0.01)
+    )
+    candidatos = crm[mask]
+    if candidatos.empty:
+        return None
+
+    # Ordenar por cercanía de fecha
+    mejor_idx = None
+    mejor_dist = None
+    for idx, r in candidatos.iterrows():
+        try:
+            dist = abs((pd.Timestamp(r["fecha"]) - fecha_ts).days)
+        except Exception:
+            dist = 999
+        if dist > dias_tol:
+            continue
+        if mejor_dist is None or dist < mejor_dist:
+            mejor_dist = dist
+            mejor_idx = idx
+
+    return mejor_idx
+
+
+# =====================================================================
+# MATCHING: CHEQUES CLEARING / ASIENTOS DE MOVIMIENTOS BANCARIOS
+# =====================================================================
+def _pasada_cheques_clearing(crm, banco, matches):
+    """
+    Matchea movimientos de cheques (clearing / depósitos echeq) del banco
+    contra los "Asiento de Movimientos Bancarios" del CRM.
+
+    En el banco aparecen como:
+        - "CLE.REC.48 ####### ECHEQ CLEARING RECIBIDO"
+        - "CR.FIL.24 ####### DEPOSITO ECHEQ CANJE"
+    En el CRM aparecen como "Asiento de Movimientos Bancarios" (a veces sin
+    concepto) por el mismo monto.
+
+    Se matchea 1:1 por monto exacto, con tolerancia de fecha de ±3 días
+    (el clearing puede acreditarse uno o dos días después del depósito).
+    """
+    import pandas as pd
+
+    mask_bco = (
+        (banco["estado"] == "pendiente")
+        & banco["descripcion_orig"].str.contains(
+            r"CLE\.REC|DEPOSITO ECHEQ|ECHEQ CLEARING|CANJE", regex=True, na=False, case=False
+        )
+    )
+    cheques = banco[mask_bco]
+    if cheques.empty:
+        return
+
+    next_id = len(matches)
+    matcheados = 0
+
+    for i_bco, fila_bco in cheques.iterrows():
+        if banco.at[i_bco, "estado"] != "pendiente":
+            continue
+        monto_bco = fila_bco["monto"]
+        fecha_bco = pd.Timestamp(fila_bco["fecha"])
+
+        # Buscar en el CRM un asiento pendiente del mismo monto exacto (±3 días)
+        mask_crm = (
+            (crm["estado"] == "pendiente")
+            & ((crm["monto"] - monto_bco).abs() < 0.01)
+        )
+        candidatos = crm[mask_crm]
+        if candidatos.empty:
+            continue
+
+        # Elegir el más cercano en fecha dentro de ±3 días
+        mejor_idx = None
+        mejor_dist = None
+        for idx, r in candidatos.iterrows():
+            try:
+                dist = abs((pd.Timestamp(r["fecha"]) - fecha_bco).days)
+            except Exception:
+                dist = 999
+            if dist > 3:
+                continue
+            if mejor_dist is None or dist < mejor_dist:
+                mejor_dist = dist
+                mejor_idx = idx
+
+        if mejor_idx is None:
+            continue
+
+        mid = f"M{next_id:04d}"
+        crm.at[mejor_idx, "match_id"] = mid
+        crm.at[mejor_idx, "estado"] = "conciliado"
+        banco.at[i_bco, "match_id"] = mid
+        banco.at[i_bco, "estado"] = "conciliado"
+
+        matches.append({
+            "match_id": mid,
+            "tipo": "Cheque clearing ↔ Asiento Mov. Bancarios",
+            "confianza": "Alta",
+            "i_crm": mejor_idx,
+            "i_bco": i_bco,
+            "diferencia_monto": 0.0,
+            "diferencia_dias": mejor_dist,
+        })
+        next_id += 1
+        matcheados += 1
+
+    if matcheados > 0:
+        print(f"  → Cheques clearing: {matcheados} matcheados")
+
+
+# =====================================================================
+# AJUSTES SUGERIDOS: COMEX PENDIENTE DE CONTABILIZACIÓN
+# =====================================================================
+def _detectar_comex_pendiente(banco_df, crm_df):
+    """
+    Detecta operaciones COB.IMPORT del banco que quedaron huérfanas después
+    del matching (no tienen su Op X correspondiente en el CRM).
+
+    Esto ocurre cuando el banco ya ejecutó la transferencia de importación
+    pero contabilidad todavía no cargó el asiento en el CRM (se cargará el
+    mes siguiente al llegar la documentación).
+
+    Como el banco YA descontó esa plata (movimiento negativo) pero el CRM no
+    lo refleja, hay que sumar ese monto como ajuste para neutralizar la
+    diferencia. El COB.IMPORT es negativo, entonces el ajuste va con el mismo
+    signo (negativo) para que el "saldo banco calculado" baje y coincida con
+    el extracto.
+    """
+    if banco_df is None:
+        return None
+
+    try:
+        # COB.IMPORT que quedaron pendientes (sin matchear)
+        mask = (
+            (banco_df["estado"] == "pendiente")
+            & banco_df["descripcion_orig"].str.upper().str.contains("COB.IMPORT", na=False)
+        )
+        comex_huerfanos = banco_df[mask]
+
+        if comex_huerfanos.empty:
+            return None
+
+        total = float(comex_huerfanos["monto"].sum())
+        cantidad = len(comex_huerfanos)
+
+        if abs(total) < 1000:
+            return None
+
+        return {
+            "concepto": "COMEX pendiente de contabilización",
+            "monto": round(total, 2),
+            "explicacion": (
+                f"Hay {cantidad} operación(es) COB.IMPORT que el banco procesó "
+                f"pero que aún no están cargadas en el CRM (se cargarán el mes "
+                f"siguiente al llegar la documentación). **El monto es referencial "
+                f"— verificá cada operación antes de aplicar.**"
+            ),
+            "cantidad_mov": cantidad,
+        }
+    except Exception:
+        return None
