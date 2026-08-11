@@ -271,10 +271,15 @@ if st.session_state.pantalla == "carga":
 elif st.session_state.pantalla == "carrito":
     stats_base = st.session_state.primer_calculo
 
-    # Calcular diferencia actual considerando los ajustes del carrito
+    # Calcular diferencia actual considerando los ajustes del carrito.
+    # Los ajustes SUMAN a la diferencia bruta, porque el cálculo del
+    # orquestador es:
+    #     saldo_banco_calculado = saldo_crm + apertura + ajustes
+    #     diferencia            = saldo_banco_calculado - saldo_extracto
+    # Un ajuste negativo (gastos, débitos pendientes) baja la diferencia.
     suma_ajustes_carrito = sum(a["monto"] for a in st.session_state.ajustes_carrito)
     diferencia_inicial = stats_base["diferencia_final"]
-    diferencia_actual = round(diferencia_inicial - suma_ajustes_carrito, 2)
+    diferencia_actual = round(diferencia_inicial + suma_ajustes_carrito, 2)
     concilia_ahora = abs(diferencia_actual) < 1000
 
     # === Banner de estado ===

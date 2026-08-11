@@ -1,0 +1,187 @@
+/*
+ * Sistema de diseño — Conciliación Bancaria
+ *
+ * Herramienta interna de trabajo contable: la prioridad es la densidad de
+ * información y la legibilidad de las cifras, no la decoración. Por eso:
+ * neutros de bajo contraste para el fondo, un único acento (azul petróleo)
+ * reservado para lo accionable, y colores semánticos separados del acento
+ * para codificar estado (conciliado / a revisar / error).
+ *
+ * Las cifras usan siempre tabular-nums para que las columnas alineen.
+ *
+ * No se usa ningún framework de CSS: la interfaz son estilos en línea sobre
+ * estas variables, más las tres clases utilitarias del final.
+ */
+
+/* --- Reset mínimo --- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+h1,
+h2,
+h3,
+p,
+figure {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+}
+
+:root {
+  /* Neutros con leve sesgo frío, para que el azul del acento no se vea sucio */
+  --fondo: #f4f6f8;
+  --superficie: #ffffff;
+  --superficie-alt: #eef1f5;
+  --borde: #dbe1e8;
+  --borde-fuerte: #c2cbd6;
+
+  --tinta: #16202b;
+  --tinta-media: #44515f;
+  --tinta-suave: #6b7885;
+
+  /* Acento: azul petróleo. Solo para lo accionable y los totales. */
+  --acento: #1b4965;
+  --acento-hover: #143a51;
+  --acento-suave: #e3ecf2;
+  --acento-borde: #b8cddb;
+
+  /* Semánticos: estado de la conciliación, independientes del acento */
+  --ok: #1f6b45;
+  --ok-fondo: #e4f2e9;
+  --ok-borde: #a9d4bc;
+
+  --alerta: #8a5510;
+  --alerta-fondo: #fbeeda;
+  --alerta-borde: #e4c48b;
+
+  --error: #99302b;
+  --error-fondo: #fbe9e8;
+  --error-borde: #e7b2ae;
+
+  --sombra: 0 1px 2px rgba(22, 32, 43, 0.06), 0 1px 3px rgba(22, 32, 43, 0.04);
+  --sombra-elevada: 0 4px 12px rgba(22, 32, 43, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fondo: #0f1419;
+    --superficie: #161d24;
+    --superficie-alt: #1c252e;
+    --borde: #2a353f;
+    --borde-fuerte: #3a4753;
+
+    --tinta: #e6ebf0;
+    --tinta-media: #b3bec9;
+    --tinta-suave: #8593a0;
+
+    --acento: #7fb3d5;
+    --acento-hover: #9cc6e2;
+    --acento-suave: #1a2a37;
+    --acento-borde: #2f455c;
+
+    --ok: #6cc48f;
+    --ok-fondo: #16281e;
+    --ok-borde: #2c4b38;
+
+    --alerta: #d99b43;
+    --alerta-fondo: #2b2115;
+    --alerta-borde: #4d3a20;
+
+    --error: #e08b86;
+    --error-fondo: #2b1817;
+    --error-borde: #4d2b29;
+
+    --sombra: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --sombra-elevada: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
+:root[data-theme="dark"] {
+  --fondo: #0f1419;
+  --superficie: #161d24;
+  --superficie-alt: #1c252e;
+  --borde: #2a353f;
+  --borde-fuerte: #3a4753;
+  --tinta: #e6ebf0;
+  --tinta-media: #b3bec9;
+  --tinta-suave: #8593a0;
+  --acento: #7fb3d5;
+  --acento-hover: #9cc6e2;
+  --acento-suave: #1a2a37;
+  --acento-borde: #2f455c;
+  --ok: #6cc48f;
+  --ok-fondo: #16281e;
+  --ok-borde: #2c4b38;
+  --alerta: #d99b43;
+  --alerta-fondo: #2b2115;
+  --alerta-borde: #4d3a20;
+  --error: #e08b86;
+  --error-fondo: #2b1817;
+  --error-borde: #4d2b29;
+}
+
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--tinta);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Toda cifra alineada en columna usa esto */
+.cifra {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Etiquetas de sección: versalitas espaciadas, sin gritar */
+.etiqueta {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+}
+
+/* Foco visible y consistente en toda la app */
+:where(button, a, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Contenedores de tabla: scrollean solos, el body nunca va de costado */
+.tabla-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
