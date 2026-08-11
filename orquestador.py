@@ -14,6 +14,8 @@ en conciliacion.py (por ahora) porque es común a cualquier banco y ya
 está probada. En una siguiente iteración se puede extraer al núcleo.
 """
 
+import io
+
 from nucleo.carga_crm import cargar_crm
 from nucleo.matching_base import pasada_1_match_exacto, pasada_2_match_tolerancia
 from nucleo.ajustes_comunes import (
@@ -21,6 +23,12 @@ from nucleo.ajustes_comunes import (
     huerfanos_banco_para_carrito,
 )
 from bancos import obtener_banco
+
+# Estas dos funciones siguen viviendo en el módulo original. El import va
+# arriba y no dentro de las funciones para que el análisis estático de
+# dependencias (el que usa Vercel al armar el bundle de la función) detecte
+# que conciliacion.py hace falta y lo incluya.
+from conciliacion import clasificar_huerfanos, generar_reporte
 
 
 def ejecutar_conciliacion(
@@ -93,7 +101,6 @@ def ejecutar_conciliacion(
 
         # 5. Clasificar huérfanos (delegado al viejo por ahora)
         reportar("reporte", "Clasificando discrepancias...", 70)
-        from conciliacion import clasificar_huerfanos
         discrepancias = clasificar_huerfanos(crm, banco)
 
         # 6. Ajustes sugeridos (específicos del banco)
@@ -117,8 +124,6 @@ def ejecutar_conciliacion(
         reportar("reporte", "Generando reporte Excel...", 95)
         excel_bytes = None
         try:
-            import io
-            from conciliacion import generar_reporte
             excel_bytes = io.BytesIO()
             generar_reporte(crm, banco, matches, discrepancias, excel_bytes,
                             resumen_contable={

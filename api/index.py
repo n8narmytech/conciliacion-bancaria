@@ -33,10 +33,24 @@ for _ruta in (_DIR_RAIZ, _DIR_API):
     if _ruta not in sys.path:
         sys.path.insert(0, _ruta)
 
-from bancos import listar_bancos  # noqa: E402
-from orquestador import ejecutar_conciliacion  # noqa: E402
+# Los imports de la lógica se hacen tolerantes a fallo a propósito: si en el
+# entorno de despliegue falta un módulo o un archivo no viajó en el bundle,
+# la función igual levanta y /api/health explica qué pasó. Un ImportError acá
+# arriba haría crashear el arranque y el error solo se vería en los logs de la
+# plataforma, sin pista de cuál fue la causa.
+ERROR_CARGA = None  # type: ignore[var-annotated]  # str cuando falla la carga
+listar_bancos = None  # type: ignore[assignment]
+ejecutar_conciliacion = None  # type: ignore[assignment]
+armar_respuesta = None  # type: ignore[assignment]
 
-from _serializacion import armar_respuesta  # noqa: E402
+try:
+    from bancos import listar_bancos  # type: ignore[no-redef] # noqa: E402
+    from orquestador import ejecutar_conciliacion  # type: ignore[no-redef] # noqa: E402
+    from _serializacion import armar_respuesta  # type: ignore[no-redef] # noqa: E402
+except Exception as _e:  # pragma: no cover - solo se activa si el bundle está mal
+    import traceback
+
+    ERROR_CARGA = f"{type(_e).__name__}: {_e}\n{traceback.format_exc()}"
 
 
 app = FastAPI(title="Conciliación Bancaria API", version="1.0.0")
@@ -60,16 +74,38 @@ app.add_middleware(
 MAX_BYTES = 10 * 1024 * 1024
 
 
+def _verificar_carga():
+    """Corta con 500 explicando el problema si la lógica no se pudo importar."""
+    if ERROR_CARGA:
+        raise HTTPException(
+            status_code=500,
+            detail=f"La lógica de conciliación no se pudo cargar. {ERROR_CARGA}",
+        )
+
+
 @app.get("/api/bancos")
 def bancos_disponibles():
     """Lista los bancos que el sistema sabe conciliar."""
+    _verificar_carga()
     return {"bancos": listar_bancos()}
 
 
 @app.get("/api/health")
 def health():
-    """Chequeo simple de que la API responde y puede importar la lógica."""
-    return {"ok": True, "bancos": len(listar_bancos())}
+    """
+    Estado de la API. Sirve para verificar, después de un despliegue, que
+    la función levantó y que encontró los módulos de la lógica contable.
+    """
+    if ERROR_CARGA:
+        return {
+            "ok": False,
+            "error": ERROR_CARGA,
+            "python": sys.version,
+            "cwd": os.getcwd(),
+            "sys_path": sys.path[:5],
+            "archivos_visibles": sorted(os.listdir(_DIR_RAIZ))[:25],
+        }
+    return {"ok": True, "bancos": len(listar_bancos()), "python": sys.version.split()[0]}
 
 
 @app.post("/api/conciliar")
@@ -92,6 +128,8 @@ async def conciliar(
     `incluir_excel` agrega el reporte .xlsx en base64; se pide solo al
     final del flujo para no generarlo en cada recálculo.
     """
+    _verificar_carga()
+
     # --- Validación de entrada ---
     codigos = {b["codigo"] for b in listar_bancos()}
     if banco not in codigos:
