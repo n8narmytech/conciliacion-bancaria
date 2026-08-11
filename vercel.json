@@ -1,12 +1,14 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/index.py": {
-      "memory": 1024,
       "maxDuration": 60,
-      "includeFiles": "{bancos,nucleo}/**"
+      "includeFiles": "**/*.py"
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" }
+    { "source": "/api/bancos", "destination": "/api/index" },
+    { "source": "/api/health", "destination": "/api/index" },
+    { "source": "/api/conciliar", "destination": "/api/index" }
   ]
 }
