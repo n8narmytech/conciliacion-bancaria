@@ -1,14 +1,25 @@
-# Dependencias de la API de conciliación (Vercel las instala desde aquí).
+# Dependencias de la API de conciliación.
 #
-# NOTA: en esta rama el frontend es Next.js, así que Streamlit ya no forma
-# parte del despliegue. Se lo quitó a propósito: arrastraba pyarrow (~106 MB)
-# y con eso el bundle de la función serverless superaba el límite de 250 MB
-# de Vercel, y la función fallaba al invocarse.
-# La interfaz vieja (app.py) sigue en la rama main con su propio requirements.
+# Vercel las instala desde este archivo (el de la raíz del proyecto).
+#
+# Sin versiones clavadas a propósito: el entorno de Vercel resuelve a las
+# versiones actuales de cada paquete, y un pin viejo de fastapi terminaba
+# siendo incompatible con la versión de starlette que instalaba el
+# resolvedor — el resultado era que fastapi quedaba sin instalar y la
+# función fallaba con ModuleNotFoundError.
+#
+# NOTA: Streamlit no está acá. En esta rama el frontend es Next.js; la
+# interfaz vieja (app.py) vive en la rama main con su propio requirements.
+# Además, streamlit arrastra pyarrow (~46 MB) y engorda el bundle sin
+# ningún uso.
 
-fastapi==0.115.6
-python-multipart==0.0.20
-pandas>=2.0.0
+fastapi>=0.115.0
+python-multipart>=0.0.9
+# pandas queda acotado a la línea 2.x: toda la lógica de conciliación se
+# probó contra 2.3 y usa DataFrame.attrs para arrastrar los saldos
+# detectados. Antes de pasar a 3.x hay que revalidar los cierres mes a
+# mes; no es un cambio para hacer de costado en un despliegue.
+pandas>=2.0.0,<3.0.0
 openpyxl>=3.1.0
 xlrd>=2.0.0
 rapidfuzz>=3.0.0
