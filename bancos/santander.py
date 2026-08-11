@@ -152,6 +152,7 @@ class Santander(Banco):
         _pasada_comex(crm, banco, matches)
         _pasada_certificaciones(crm, banco, matches)
         _pasada_prestamo(crm, banco, matches)
+        _pasada_cupones_visa_master(crm, banco, matches)
         _pasada_agrupaciones_dia(crm, banco, matches)
         _pasada_cheques_clearing(crm, banco, matches)
 
@@ -698,6 +699,74 @@ def _pasada_prestamo(crm, banco, matches):
 
 
 # =====================================================================
+# MATCHING: CUPONES VISA/MASTER ↔ LIQ-TC
+# =====================================================================
+def _pasada_cupones_visa_master(crm, banco, matches):
+    """
+    Matchea los cupones VISA/MASTER del banco (uno por comercio/día,
+    "... ACREDITACION A COMERCIO ...") contra los asientos Liq-TC del CRM.
+
+    A diferencia de BBVA, en Santander no hay un "ID de lote" por
+    liquidación en la descripción del banco: la tarjeta se liquida en
+    bloque a fin de mes, y el CRM registra varios asientos Liq-TC (uno
+    por lote) el último día. Por eso se matchea por SUMA TOTAL del
+    período: si la suma de todos los cupones pendientes del banco
+    coincide (al peso) con la suma de todos los Liq-TC pendientes del
+    CRM, se marcan todos como conciliados en un solo grupo.
+
+    Los movimientos "DEBITO COMERCIO" (reversas/contracargos) se excluyen
+    porque no forman parte de la liquidación regular del mes.
+    """
+    mask_bco = (
+        (banco["estado"] == "pendiente")
+        & banco["descripcion_orig"].str.contains(r"VISA|MASTER", regex=True, na=False, case=False)
+        & ~banco["descripcion_orig"].str.contains(r"DEBITO", regex=True, na=False, case=False)
+    )
+    cupones = banco[mask_bco]
+
+    mask_crm = (crm["estado"] == "pendiente") & (crm["categoria_especial"] == "LIQ-TC")
+    liqtc = crm[mask_crm]
+
+    if cupones.empty or liqtc.empty:
+        return
+
+    suma_cupones = float(cupones["monto"].sum())
+    suma_liqtc = float(liqtc["monto"].sum())
+
+    if abs(suma_cupones - suma_liqtc) > 1.0:
+        return
+
+    mid = f"M{len(matches):04d}"
+    for i_bco in cupones.index:
+        banco.at[i_bco, "match_id"] = mid
+        banco.at[i_bco, "estado"] = "conciliado"
+    for i_crm in liqtc.index:
+        crm.at[i_crm, "match_id"] = mid
+        crm.at[i_crm, "estado"] = "conciliado"
+
+    matches.append({
+        "match_id": mid,
+        "tipo": f"Cupones VISA/MASTER ↔ Liq-TC ({len(cupones)} banco ↔ {len(liqtc)} CRM)",
+        "confianza": "Alta",
+        "razon_ia": (
+            f"Suma de {len(cupones)} cupones VISA/MASTER del banco = "
+            f"{suma_cupones:,.2f}, coincide con la suma de {len(liqtc)} "
+            f"asientos Liq-TC del CRM."
+        ),
+        "i_crm": liqtc.index[0],
+        "i_crm_lista": list(liqtc.index),
+        "i_bco": cupones.index[0],
+        "i_bco_lista": list(cupones.index),
+        "diferencia_monto": round(abs(suma_cupones - suma_liqtc), 2),
+        "diferencia_dias": 0,
+        "es_agrupado": True,
+        "tipo_agrupado": "cupones_visa_master",
+    })
+    print(f"  → Cupones VISA/MASTER: {len(cupones)} banco ↔ {len(liqtc)} Liq-TC CRM "
+          f"matcheados (suma ${suma_cupones:,.2f})")
+
+
+# =====================================================================
 # MATCHING: AGRUPACIONES DÍA + SUMA
 # =====================================================================
 def _pasada_agrupaciones_dia(crm, banco, matches):
@@ -718,17 +787,35 @@ def _pasada_agrupaciones_dia(crm, banco, matches):
         "Banco Santander cta cte" (que a veces vienen sin concepto).
 
     Para cada grupo del banco (por día + patrón) se busca en el CRM del mismo
-    día (o ±1 día) un movimiento del mismo signo cuyo monto coincida con la
-    suma del grupo. Es tolerante: si no hay match exacto de la suma total,
-    intenta subconjuntos.
+    día (o ±5 días) un movimiento del mismo signo cuyo monto coincida con
+    la suma del grupo. Si la suma del día completo no coincide con ningún
+    asiento, prueba subconjuntos: puede pasar que solo parte de los
+    movimientos del día pertenezcan a un asiento y el resto a otro (ej.
+    2 de 4 pagos "TR SNP MIN" del mismo día).
     """
+    import itertools
     import pandas as pd
+
+    def _subconjunto_que_suma(indices, montos_por_indice, objetivo,
+                              tolerancia=0.01, max_grupo=8):
+        """
+        Busca un subconjunto de `indices` (de 2 elementos en adelante) cuyos
+        montos sumen `objetivo`. Devuelve la lista de índices o None.
+        Se acota a grupos chicos para que la búsqueda sea rápida.
+        """
+        pool = indices[:max_grupo] if len(indices) > max_grupo else indices
+        for r in range(2, len(pool)):
+            for combo in itertools.combinations(pool, r):
+                if abs(sum(montos_por_indice[i] for i in combo) - objetivo) < tolerancia:
+                    return list(combo)
+        return None
 
     # Definición de los patrones: (nombre, regex del banco, signo esperado)
     patrones = [
         ("SUELDOS", r"SUELDOS|PAGO HABERES|PAGO DE HABERES", "neg"),
         ("TR SNP MIN", r"TR SNP MIN", "neg"),
-        ("Transf. mismo titular", r"MISMO TITULAR", "pos"),
+        ("Transf. mismo titular", r"MISMO TITULAR|CVU MISMO", "pos"),
+        ("Rescate FCI", r"RESCATE FONDOS|RES\.SF", "pos"),
     ]
 
     next_id = len(matches)
@@ -759,10 +846,31 @@ def _pasada_agrupaciones_dia(crm, banco, matches):
                 continue
 
             # Buscar en el CRM un asiento del mismo signo cuyo monto coincida
-            # con la suma del grupo (mismo día o ±2 días).
+            # con la suma del grupo completo (mismo día o ±5 días).
             match_crm = _buscar_asiento_crm_para_suma(
-                crm, suma_banco, fecha, dias_tol=2
+                crm, suma_banco, fecha, dias_tol=5
             )
+
+            # Si la suma del día completo no matchea, puede ser que solo
+            # PARTE del grupo corresponda a un asiento (y el resto a otro).
+            # Probamos subconjuntos contra los asientos del CRM cercanos.
+            if match_crm is None and len(indices_bco) > 2:
+                montos_por_indice = {i: banco.at[i, "monto"] for i in indices_bco}
+                crm_cand = crm[
+                    (crm["estado"] == "pendiente")
+                    & ((crm["monto"] > 0) == (signo == "pos"))
+                ]
+                crm_cand = crm_cand[crm_cand["fecha"].apply(
+                    lambda f: abs((pd.Timestamp(f) - pd.Timestamp(fecha)).days) <= 5
+                )]
+                for i_crm_cand, r_crm in crm_cand.iterrows():
+                    subconjunto = _subconjunto_que_suma(
+                        indices_bco, montos_por_indice, r_crm["monto"]
+                    )
+                    if subconjunto:
+                        match_crm = i_crm_cand
+                        indices_bco = subconjunto
+                        break
 
             if match_crm is not None:
                 i_crm = match_crm
@@ -797,7 +905,7 @@ def _pasada_agrupaciones_dia(crm, banco, matches):
         print(f"  → Agrupaciones día+suma: {total_matcheado} grupos matcheados")
 
 
-def _buscar_asiento_crm_para_suma(crm, suma_objetivo, fecha, dias_tol=2):
+def _buscar_asiento_crm_para_suma(crm, suma_objetivo, fecha, dias_tol=5):
     """
     Busca en el CRM un asiento pendiente cuyo monto coincida (al céntimo)
     con `suma_objetivo`, dentro de una ventana de ±dias_tol días respecto
@@ -890,7 +998,7 @@ def _pasada_cheques_clearing(crm, banco, matches):
                 dist = abs((pd.Timestamp(r["fecha"]) - fecha_bco).days)
             except Exception:
                 dist = 999
-            if dist > 3:
+            if dist > 5:
                 continue
             if mejor_dist is None or dist < mejor_dist:
                 mejor_dist = dist

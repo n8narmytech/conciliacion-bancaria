@@ -134,8 +134,14 @@ class BBVA(Banco):
     # MATCHING ESPECÍFICO (se completa en el siguiente bloque)
     # -----------------------------------------------------------------
     def pasadas_matching_especificas(self, crm, banco, matches):
-        """Ejecuta el matching de cupones VISA/MASTER agrupados."""
+        """
+        Ejecuta las pasadas específicas de BBVA:
+            1. Cupones VISA/MASTER agrupados por ID de lote ↔ Liq-TC.
+            2. Sueldos: varios débitos de haberes del mismo día en el banco
+               que suman un asiento único del CRM.
+        """
         _pasada_cupones_agrupados(crm, banco, matches)
+        _pasada_sueldos_agrupados(crm, banco, matches)
 
     # -----------------------------------------------------------------
     # AJUSTES SUGERIDOS
@@ -487,6 +493,91 @@ def _pasada_cupones_agrupados(crm, banco, matches):
 
     if matcheados_count > 0:
         print(f"  → {matcheados_count} LIQ-TC matcheados con sus cupones bancarios")
+
+
+# =====================================================================
+# MATCHING ESPECÍFICO: SUELDOS AGRUPADOS (DÍA + SUMA)
+# =====================================================================
+def _pasada_sueldos_agrupados(crm, banco, matches, dias_tol=5):
+    """
+    Matchea los pagos de haberes: el banco emite un débito por lote de
+    empleados ("OG-DEBITO ... HABERES", "OG-DEB./CRED ... HABERES") y el
+    CRM los agrupa en un asiento único ("Op X ... Transferencia Bancaria")
+    del mismo día.
+
+    Misma mecánica N banco → 1 CRM que ya usa Santander para sus sueldos,
+    adaptada al patrón de texto propio de BBVA.
+    """
+    mask_bco = (
+        (banco["estado"] == "pendiente")
+        & banco["descripcion_orig"].str.contains(r"HABERES", regex=True, na=False, case=False)
+        & (banco["monto"] < 0)
+    )
+    grupo_banco = banco[mask_bco]
+    if grupo_banco.empty:
+        return
+
+    next_id = len(matches)
+    total_matcheado = 0
+
+    for fecha, movs_dia in grupo_banco.groupby("fecha"):
+        indices_bco = [i for i in movs_dia.index if banco.at[i, "estado"] == "pendiente"]
+        if not indices_bco:
+            continue
+        suma_banco = float(banco.loc[indices_bco, "monto"].sum())
+        if abs(suma_banco) < 0.01:
+            continue
+
+        # Buscar en el CRM un asiento pendiente por el mismo monto (±dias_tol)
+        candidatos = crm[
+            (crm["estado"] == "pendiente")
+            & ((crm["monto"] - suma_banco).abs() < 0.01)
+        ]
+        mejor_idx = None
+        mejor_dist = None
+        for idx, r in candidatos.iterrows():
+            try:
+                dist = abs((pd.Timestamp(r["fecha"]) - pd.Timestamp(fecha)).days)
+            except Exception:
+                dist = 999
+            if dist > dias_tol:
+                continue
+            if mejor_dist is None or dist < mejor_dist:
+                mejor_dist = dist
+                mejor_idx = idx
+
+        if mejor_idx is None:
+            continue
+
+        mid = f"M{next_id:04d}"
+        crm.at[mejor_idx, "match_id"] = mid
+        crm.at[mejor_idx, "estado"] = "conciliado"
+        for i_bco in indices_bco:
+            banco.at[i_bco, "match_id"] = mid
+            banco.at[i_bco, "estado"] = "conciliado"
+
+        matches.append({
+            "match_id": mid,
+            "tipo": f"Sueldos ({len(indices_bco)} banco ↔ 1 CRM)",
+            "confianza": "Alta",
+            "razon_ia": (
+                f"Suma de {len(indices_bco)} débito(s) de haberes del banco "
+                f"= {suma_banco:,.2f}, coincide con asiento del CRM."
+            ),
+            "i_crm": mejor_idx,
+            "i_crm_lista": [mejor_idx],
+            "i_bco": indices_bco[0],
+            "i_bco_lista": indices_bco,
+            "diferencia_monto": 0.0,
+            "diferencia_dias": mejor_dist,
+            "es_agrupado": True,
+            "tipo_agrupado": "N_banco_a_1_crm",
+        })
+        next_id += 1
+        total_matcheado += 1
+
+    if total_matcheado > 0:
+        print(f"  → Sueldos (día+suma): {total_matcheado} grupo(s) matcheado(s)")
 
 
 # =====================================================================

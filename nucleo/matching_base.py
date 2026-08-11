@@ -19,7 +19,7 @@ de cada banco y vive en su propio módulo.
 # Estos valores se usan como default si el llamador no pasa parámetros.
 # Cualquier banco puede llamar a las pasadas con tolerancias distintas
 # si necesita ser más estricto o más laxo.
-DIAS_TOLERANCIA_DEFAULT = 2
+DIAS_TOLERANCIA_DEFAULT = 5
 MONTO_TOLERANCIA_ABS_DEFAULT = 1.0
 MONTO_TOLERANCIA_PCT_DEFAULT = 0.1
 

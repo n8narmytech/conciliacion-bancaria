@@ -11,11 +11,13 @@ Para agregar un nuevo banco:
 from bancos.base import Banco
 from bancos.bbva import BBVA
 from bancos.santander import Santander
+from bancos.galicia import Galicia
 
 # Lista de bancos disponibles en la UI (en orden de aparición)
 BANCOS_DISPONIBLES = [
     BBVA,
     Santander,
+    Galicia,
 ]
 
 
