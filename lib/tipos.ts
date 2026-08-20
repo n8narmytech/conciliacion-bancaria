@@ -97,8 +97,12 @@ export interface ParametrosConciliacion {
   banco: string;
   archivoCrm: File;
   archivoBanco: File;
-  /** Saldo del extracto al cierre del mes anterior: de acá se deriva la apertura. */
-  saldoExtractoAnterior: number;
+  /**
+   * Saldo del extracto al cierre del mes anterior: de acá se deriva la apertura.
+   * Solo hace falta cuando el extracto del banco no informa su saldo de apertura
+   * (es el caso de BBVA); en los demás el backend lo lee del propio archivo.
+   */
+  saldoExtractoAnterior?: number;
   saldoExtracto?: number;
   ajustes: Ajuste[];
   incluirExcel?: boolean;

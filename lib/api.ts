@@ -48,7 +48,9 @@ export async function conciliar(
   form.append("banco", params.banco);
   form.append("archivo_crm", params.archivoCrm);
   form.append("archivo_banco", params.archivoBanco);
-  form.append("saldo_extracto_anterior", String(params.saldoExtractoAnterior));
+  if (params.saldoExtractoAnterior !== undefined && params.saldoExtractoAnterior !== null) {
+    form.append("saldo_extracto_anterior", String(params.saldoExtractoAnterior));
+  }
   form.append("ajustes", JSON.stringify(params.ajustes));
   form.append("incluir_excel", String(params.incluirExcel ?? false));
   if (params.saldoExtracto !== undefined && params.saldoExtracto !== null) {

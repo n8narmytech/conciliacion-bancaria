@@ -25,7 +25,7 @@ interface ArchivosCargados {
   banco: string;
   archivoCrm: File;
   archivoBanco: File;
-  saldoExtractoAnterior: number;
+  saldoExtractoAnterior?: number;
 }
 
 const PASOS: { id: Pantalla; nombre: string }[] = [

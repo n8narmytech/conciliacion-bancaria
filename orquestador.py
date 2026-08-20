@@ -95,16 +95,28 @@ def ejecutar_conciliacion(
         reportar("carga", "Cargando CRM...", 10)
         crm = cargar_crm(archivo_crm)
 
-        # 2b. Derivar el saldo de apertura si se informó el cierre anterior
-        apertura_derivada = None
-        arranque_crm = crm.attrs.get("saldo_crm_arranque")
-        if saldo_extracto_anterior is not None and arranque_crm is not None:
-            apertura_derivada = round(float(saldo_extracto_anterior) - float(arranque_crm), 2)
-            saldo_apertura = apertura_derivada
-
         # 3. Cargar extracto (específico del banco)
         reportar("carga", f"Cargando extracto {banco_obj.nombre}...", 15)
         banco = banco_obj.cargar_extracto(archivo_banco)
+
+        # 3b. Derivar el saldo de apertura.
+        #
+        # El cierre del mes anterior puede venir de dos lados: informado por
+        # quien concilia, o leído del propio extracto, porque el saldo con el
+        # que abre el extracto de este mes ES el cierre del anterior. Cuando
+        # el archivo lo trae (Santander, Galicia) no hay que informar nada;
+        # BBVA no lo expone y ahí sí hace falta cargarlo a mano.
+        apertura_derivada = None
+        arranque_crm = crm.attrs.get("saldo_crm_arranque")
+        cierre_anterior = saldo_extracto_anterior
+        origen_cierre = "informado"
+        if cierre_anterior is None:
+            cierre_anterior = banco.attrs.get("saldo_inicial_detectado")
+            origen_cierre = "detectado del extracto"
+
+        if cierre_anterior is not None and arranque_crm is not None:
+            apertura_derivada = round(float(cierre_anterior) - float(arranque_crm), 2)
+            saldo_apertura = apertura_derivada
 
         # 4. Pasadas de matching
         matches = []
@@ -143,7 +155,8 @@ def ejecutar_conciliacion(
         # Trazabilidad de cómo se obtuvo la apertura, para que la interfaz
         # pueda mostrar el desfase heredado en vez de un número suelto.
         stats["saldo_crm_arranque"] = arranque_crm
-        stats["saldo_extracto_anterior"] = saldo_extracto_anterior
+        stats["saldo_extracto_anterior"] = cierre_anterior
+        stats["cierre_anterior_origen"] = origen_cierre if apertura_derivada is not None else None
         stats["apertura_derivada"] = apertura_derivada
         stats["apertura_origen"] = "derivada" if apertura_derivada is not None else "manual"
 
