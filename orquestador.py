@@ -28,7 +28,8 @@ from bancos import obtener_banco
 # arriba y no dentro de las funciones para que el análisis estático de
 # dependencias (el que usa Vercel al armar el bundle de la función) detecte
 # que conciliacion.py hace falta y lo incluya.
-from conciliacion import clasificar_huerfanos, generar_reporte
+from conciliacion import clasificar_huerfanos
+from nucleo.reporte import generar_reporte_excel
 
 
 def ejecutar_conciliacion(
@@ -39,6 +40,7 @@ def ejecutar_conciliacion(
     ajustes_manuales=None,
     saldo_extracto_banco=None,
     callback_progreso=None,
+    saldo_extracto_anterior=None,
 ):
     """
     Ejecuta la conciliación completa para el banco especificado.
@@ -52,7 +54,17 @@ def ejecutar_conciliacion(
     archivo_banco : ruta o BytesIO
         Excel del extracto bancario.
     saldo_apertura : float
-        Arrastre del mes anterior.
+        Arrastre del mes anterior. Se ignora si se pasa
+        `saldo_extracto_anterior`, porque en ese caso se deriva.
+    saldo_extracto_anterior : float | None
+        Saldo del extracto bancario al cierre del mes anterior. Cuando se
+        informa, el saldo de apertura se DERIVA en vez de pedirse:
+
+            apertura = saldo_extracto_anterior - arranque del libro mayor
+
+        Es el desfase heredado: cuánto se llevaban el banco y el libro al
+        empezar el mes. Los dos datos salen de los archivos, así que no
+        depende de que alguien recuerde un número de meses anteriores.
     ajustes_manuales : list[dict]
         Ajustes cargados a mano en el carrito: [{"concepto", "monto", ...}].
     saldo_extracto_banco : float | None
@@ -83,6 +95,13 @@ def ejecutar_conciliacion(
         reportar("carga", "Cargando CRM...", 10)
         crm = cargar_crm(archivo_crm)
 
+        # 2b. Derivar el saldo de apertura si se informó el cierre anterior
+        apertura_derivada = None
+        arranque_crm = crm.attrs.get("saldo_crm_arranque")
+        if saldo_extracto_anterior is not None and arranque_crm is not None:
+            apertura_derivada = round(float(saldo_extracto_anterior) - float(arranque_crm), 2)
+            saldo_apertura = apertura_derivada
+
         # 3. Cargar extracto (específico del banco)
         reportar("carga", f"Cargando extracto {banco_obj.nombre}...", 15)
         banco = banco_obj.cargar_extracto(archivo_banco)
@@ -102,6 +121,7 @@ def ejecutar_conciliacion(
         # 5. Clasificar huérfanos (delegado al viejo por ahora)
         reportar("reporte", "Clasificando discrepancias...", 70)
         discrepancias = clasificar_huerfanos(crm, banco)
+        _marcar_partidas_entre_meses(discrepancias)
 
         # 6. Ajustes sugeridos (específicos del banco)
         reportar("reporte", "Calculando ajustes sugeridos...", 80)
@@ -120,29 +140,23 @@ def ejecutar_conciliacion(
             ajustes_sugeridos, posibles_debitos, banco_obj,
         )
 
-        # 9. Generar el archivo Excel de reporte (usa función del viejo por ahora)
+        # Trazabilidad de cómo se obtuvo la apertura, para que la interfaz
+        # pueda mostrar el desfase heredado en vez de un número suelto.
+        stats["saldo_crm_arranque"] = arranque_crm
+        stats["saldo_extracto_anterior"] = saldo_extracto_anterior
+        stats["apertura_derivada"] = apertura_derivada
+        stats["apertura_origen"] = "derivada" if apertura_derivada is not None else "manual"
+
+        # 9. Generar el archivo Excel de reporte
         reportar("reporte", "Generando reporte Excel...", 95)
         excel_bytes = None
         try:
             excel_bytes = io.BytesIO()
-            generar_reporte(crm, banco, matches, discrepancias, excel_bytes,
-                            resumen_contable={
-                                "saldo_crm": stats["saldo_crm"],
-                                "saldo_apertura": stats["saldo_apertura"],
-                                "ajustes_manuales": stats["ajustes_manuales"],
-                                "ajustes_total": stats["total_ajustes"],
-                                "saldo_banco_calculado": stats["saldo_banco_calculado"],
-                                "saldo_extracto": stats["saldo_extracto"],
-                                "diferencia_final": stats["diferencia_final"],
-                                "concilia_ok": stats["concilia_ok"],
-                                "composicion": stats["composicion"],
-                                "top_movimientos": stats["top_movimientos"],
-                                "sugerencias": stats["sugerencias"],
-                                "neto_crm": stats["saldo_crm"],
-                                "neto_banco": stats["saldo_extracto"],
-                                "diferencia": stats["diferencia_final"],
-                                "diferencia_residual": stats["diferencia_final"],
-                            })
+            generar_reporte_excel(
+                crm, banco, matches, discrepancias, stats, excel_bytes,
+                nombre_banco=banco_obj.nombre,
+                periodo=_describir_periodo(banco),
+            )
             excel_bytes.seek(0)
         except Exception as e:
             print(f"⚠ No se pudo generar Excel: {e}")
@@ -172,6 +186,62 @@ def ejecutar_conciliacion(
             "excel_bytes": None,
             "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
         }
+
+
+def _describir_periodo(banco_df):
+    """Arma un texto tipo "junio 2026" a partir de las fechas del extracto."""
+    MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    try:
+        fechas = [f for f in banco_df["fecha"] if f is not None]
+        if not fechas:
+            return ""
+        # El mes predominante, no el ultimo movimiento: los extractos suelen
+        # traer algun cargo con fecha del mes siguiente (impuestos que el
+        # banco imputa al dia habil posterior) y eso rotularia mal el periodo.
+        from collections import Counter
+        (anio, mes), _ = Counter((f.year, f.month) for f in fechas).most_common(1)[0]
+        return f"{MESES[mes - 1]} {anio}"
+    except Exception:
+        return ""
+
+
+def _marcar_partidas_entre_meses(discrepancias):
+    """
+    Etiqueta las discrepancias que tienen pinta de cruzar de un mes a otro.
+
+    El sistema procesa un mes por vez, así que cuando una operación se
+    registra en el libro sobre el cierre y el banco la acredita a principios
+    del mes siguiente, queda sin pareja de los dos lados sin que haya nada
+    mal. El patrón típico:
+
+      - Movimiento del BANCO en los primeros días del mes: puede ser la
+        acreditación de algo que el libro ya registró el mes pasado.
+      - Movimiento del CRM sobre el cierre: puede ser un cobro o pago que
+        el banco procese recién el mes que viene.
+
+    Es una pista para saber dónde mirar, NO una conclusión: el sistema no
+    tiene el mayor del mes anterior, así que no puede confirmarlo. Por eso
+    solo agrega una nota y no propone ningún ajuste — un ajuste sugerido
+    invita a aceptarlo sin verificar, y ahí es donde se esconden los
+    errores que la conciliación tiene que encontrar.
+    """
+    for d in discrepancias:
+        fecha = d.get("fecha")
+        if not fecha or not hasattr(fecha, "day"):
+            continue
+
+        d["cruza_meses"] = False
+        d["nota"] = ""
+
+        if d.get("origen") == "BANCO" and fecha.day <= 3:
+            d["cruza_meses"] = True
+            d["nota"] = ("Movimiento del banco de los primeros días del mes: "
+                         "verificá si ya está asentado en el mes anterior.")
+        elif d.get("origen") == "CRM" and fecha.day >= 28:
+            d["cruza_meses"] = True
+            d["nota"] = ("Asiento del cierre del mes: puede que el banco lo "
+                         "procese el mes siguiente.")
 
 
 def _calcular_saldos_y_residuo(

@@ -114,6 +114,7 @@ async def conciliar(
     archivo_crm: UploadFile = File(...),
     archivo_banco: UploadFile = File(...),
     saldo_apertura: float = Form(0.0),
+    saldo_extracto_anterior: str = Form(""),
     saldo_extracto: str = Form(""),
     ajustes: str = Form("[]"),
     incluir_excel: bool = Form(False),
@@ -171,12 +172,26 @@ async def conciliar(
         except ValueError:
             raise HTTPException(status_code=400, detail="El saldo del extracto no es un número.")
 
+    # Saldo del extracto al cierre del mes anterior: con este dato el sistema
+    # deriva el saldo de apertura en vez de que haya que informarlo. Se acepta
+    # el cero, porque un cierre en cero es un valor válido.
+    sal_ant = None
+    if saldo_extracto_anterior.strip():
+        try:
+            sal_ant = float(saldo_extracto_anterior)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="El saldo del extracto del mes anterior no es un número.",
+            )
+
     # --- Ejecución ---
     resultado = ejecutar_conciliacion(
         banco,
         buffer_crm,
         buffer_banco,
         saldo_apertura=saldo_apertura,
+        saldo_extracto_anterior=sal_ant,
         ajustes_manuales=ajustes_manuales,
         saldo_extracto_banco=sal_ext,
     )

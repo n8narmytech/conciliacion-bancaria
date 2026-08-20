@@ -74,6 +74,12 @@ export interface Estadisticas {
 
   ajustes_sugeridos: AjusteSugerido[];
   ajustes_manuales: Ajuste[];
+
+  // Trazabilidad de la apertura
+  saldo_crm_arranque: number | null;
+  saldo_extracto_anterior: number | null;
+  apertura_derivada: number | null;
+  apertura_origen: "derivada" | "manual";
 }
 
 export interface RespuestaConciliacion {
@@ -91,7 +97,8 @@ export interface ParametrosConciliacion {
   banco: string;
   archivoCrm: File;
   archivoBanco: File;
-  saldoApertura: number;
+  /** Saldo del extracto al cierre del mes anterior: de acá se deriva la apertura. */
+  saldoExtractoAnterior: number;
   saldoExtracto?: number;
   ajustes: Ajuste[];
   incluirExcel?: boolean;

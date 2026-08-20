@@ -13,17 +13,17 @@ import { pesos } from "@/lib/formato";
 import { Aviso, Boton, CampoNumero, Panel } from "./ui";
 
 /**
- * Saldo de apertura por banco.
+ * Último saldo de extracto conocido por banco, solo como referencia rápida.
  *
- * No es un valor que se recalcule cada mes: es el desfase estructural
- * histórico de cada cuenta, verificado contra las conciliaciones cerradas
- * de febrero a junio 2026. Se precarga para no tener que buscarlo, pero
- * queda editable por si contabilidad lo ajusta.
+ * El sistema ya no pide el "saldo de apertura": lo deriva a partir del saldo
+ * con que cerró el extracto del mes anterior y del saldo con que abre el
+ * libro mayor. Estos valores son los cierres de junio 2026 y sirven para
+ * arrancar la conciliación de julio sin ir a buscar el extracto anterior.
  */
-const APERTURA_POR_BANCO: Record<string, number> = {
-  bbva: 4374372.97,
-  santander: 13983219.82,
-  galicia: 0,
+const ULTIMO_CIERRE_CONOCIDO: Record<string, { saldo: number; periodo: string }> = {
+  bbva: { saldo: 199004.24, periodo: "junio 2026" },
+  santander: { saldo: 37245619.46, periodo: "junio 2026" },
+  galicia: { saldo: 596813.79, periodo: "junio 2026" },
 };
 
 export function PantallaCarga({
@@ -37,7 +37,7 @@ export function PantallaCarga({
     banco: string;
     archivoCrm: File;
     archivoBanco: File;
-    saldoApertura: number;
+    saldoExtractoAnterior: number;
   }) => void;
   procesando: boolean;
   error: string | null;
@@ -45,21 +45,22 @@ export function PantallaCarga({
   const [banco, setBanco] = useState<string>("");
   const [archivoCrm, setArchivoCrm] = useState<File | null>(null);
   const [archivoBanco, setArchivoBanco] = useState<File | null>(null);
-  const [saldoApertura, setSaldoApertura] = useState<number>(0);
-  const [aperturaTocada, setAperturaTocada] = useState(false);
+  const [saldoExtractoAnterior, setSaldoExtractoAnterior] = useState<number>(0);
+  const [cierreTocado, setCierreTocado] = useState(false);
 
-  // Al elegir banco, precargar su apertura salvo que el usuario ya la haya editado
+  // Al elegir banco, precargar el último cierre conocido como referencia
   useEffect(() => {
-    if (banco && !aperturaTocada) {
-      setSaldoApertura(APERTURA_POR_BANCO[banco] ?? 0);
+    if (banco && !cierreTocado) {
+      setSaldoExtractoAnterior(ULTIMO_CIERRE_CONOCIDO[banco]?.saldo ?? 0);
     }
-  }, [banco, aperturaTocada]);
+  }, [banco, cierreTocado]);
 
   useEffect(() => {
     if (!banco && bancos.length > 0) setBanco(bancos[0].codigo);
   }, [bancos, banco]);
 
   const bancoElegido = bancos.find((b) => b.codigo === banco);
+  const referencia = ULTIMO_CIERRE_CONOCIDO[banco];
   const listo = Boolean(banco && archivoCrm && archivoBanco);
 
   return (
@@ -136,24 +137,31 @@ export function PantallaCarga({
       </Panel>
 
       <Panel
-        titulo="Saldo de apertura"
-        descripcion="Arrastre histórico de la cuenta. Se precarga según el banco; editalo solo si contabilidad lo cambió."
+        titulo="Cierre del mes anterior"
+        descripcion="Con este dato el sistema calcula solo el saldo de apertura, comparándolo contra el saldo con que abre el libro mayor."
       >
-        <div style={{ maxWidth: 320 }}>
+        <div style={{ maxWidth: 380 }}>
           <CampoNumero
-            etiqueta="Saldo apertura pendiente"
-            valor={saldoApertura}
+            etiqueta="Saldo del extracto al cierre del mes anterior"
+            valor={saldoExtractoAnterior}
             onChange={(v) => {
-              setAperturaTocada(true);
-              setSaldoApertura(v);
+              setCierreTocado(true);
+              setSaldoExtractoAnterior(v);
             }}
             ayuda={
-              aperturaTocada
-                ? "Valor editado manualmente."
-                : `Precargado para ${bancoElegido?.nombre ?? "el banco"}: ${pesos(saldoApertura)}`
+              cierreTocado
+                ? "Valor ingresado manualmente."
+                : referencia
+                  ? `Último cierre registrado de ${bancoElegido?.nombre ?? "este banco"} (${referencia.periodo}): ${pesos(referencia.saldo)}. Cambialo si vas a conciliar otro período.`
+                  : "Tomalo del extracto del mes anterior."
             }
           />
         </div>
+        <p style={{ margin: "0.75rem 0 0", fontSize: "0.79rem", color: "var(--tinta-suave)" }}>
+          Ya no hace falta informar el saldo de apertura: se deriva de este número.
+          Si el libro abre en el mismo saldo con que cerró el banco, no hay arrastre;
+          si difieren, esa diferencia es lo que quedó pendiente del mes anterior.
+        </p>
       </Panel>
 
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -166,7 +174,7 @@ export function PantallaCarga({
               banco,
               archivoCrm: archivoCrm!,
               archivoBanco: archivoBanco!,
-              saldoApertura,
+              saldoExtractoAnterior,
             })
           }
         >

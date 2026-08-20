@@ -307,12 +307,26 @@ export function PantallaCarrito({
       </Panel>
 
       {/* ---- Desglose ---- */}
-      <Panel titulo="Cómo se llega a la diferencia">
+      <Panel
+        titulo="Cómo se llega a la diferencia"
+        descripcion={
+          stats.apertura_origen === "derivada" && stats.saldo_crm_arranque !== null
+            ? `Apertura derivada: el extracto cerró el mes anterior en ${pesos(stats.saldo_extracto_anterior ?? 0)} y el libro abre en ${pesos(stats.saldo_crm_arranque)}.`
+            : undefined
+        }
+      >
         <div className="tabla-scroll">
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.87rem" }}>
             <tbody>
               <Fila etiqueta="Saldo según CRM" monto={stats.saldo_crm} />
-              <Fila etiqueta="+ Saldo de apertura" monto={stats.saldo_apertura} />
+              <Fila
+                etiqueta={
+                  stats.apertura_origen === "derivada"
+                    ? "+ Saldo de apertura (derivado)"
+                    : "+ Saldo de apertura"
+                }
+                monto={stats.saldo_apertura}
+              />
               {ajustes.map((a, i) => (
                 <Fila key={i} etiqueta={a.concepto} monto={a.monto} sangria />
               ))}

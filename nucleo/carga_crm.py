@@ -46,6 +46,8 @@ def cargar_crm(path):
 
     Y guarda como attrs:
         - saldo_crm_detectado: saldo final del período leído de "Acumulado Mensual"
+        - saldo_crm_arranque: saldo con el que abre el mes, antes del primer
+          movimiento. Sirve para derivar el desfase heredado del mes anterior.
     """
     df = leer_excel(path, header=CRM_HEADER_ROW)
     df = df.dropna(how="all").reset_index(drop=True)
@@ -56,6 +58,11 @@ def cargar_crm(path):
     # mes según GBP, considerando el arrastre del mes anterior.
     # Este es el número que la contadora usa en su planilla.
     saldo_crm_acumulado = _detectar_acumulado_mensual(df)
+
+    # === Detectar con qué saldo ABRE el mes ===
+    # El acumulado del primer movimiento ya lo tiene sumado, así que se lo
+    # resta para obtener el saldo de apertura del libro.
+    saldo_crm_arranque = _detectar_arranque_acumulado(df)
 
     # FILTRO IMPORTANTE: solo procesar filas con número de asiento válido.
     # Esto excluye filas de totales/cierre como "Total correspondiente al mes...",
@@ -114,6 +121,7 @@ def cargar_crm(path):
 
     # Guardar el saldo detectado como attr
     out.attrs["saldo_crm_detectado"] = saldo_crm_acumulado
+    out.attrs["saldo_crm_arranque"] = saldo_crm_arranque
 
     return out
 
@@ -138,6 +146,43 @@ def _detectar_acumulado_mensual(df):
     if len(acumulados_mov) == 0:
         return None
     return float(acumulados_mov.iloc[-1])
+
+
+def _detectar_arranque_acumulado(df):
+    """
+    Devuelve el saldo con el que abre el mes en el libro mayor.
+
+    La columna "Acumulado Mensual" trae el saldo DESPUÉS de cada movimiento,
+    así que el saldo de apertura es el acumulado del primer asiento menos el
+    importe de ese mismo asiento.
+
+    Este dato es la base para derivar el desfase heredado del mes anterior:
+    si el libro abre en el mismo saldo con el que cerró el extracto anterior,
+    no hay nada heredado; si difiere, esa diferencia es el arrastre.
+
+    Devuelve None si el archivo no trae la información necesaria.
+    """
+    if "Acumulado Mensual" not in df.columns:
+        return None
+
+    col_asiento = COLS_CRM["comprobante"]
+    if col_asiento not in df.columns:
+        return None
+
+    mask_validos = pd.to_numeric(df[col_asiento], errors="coerce").notna()
+    if not mask_validos.any():
+        return None
+
+    validos = df[mask_validos]
+    acumulados = pd.to_numeric(validos["Acumulado Mensual"], errors="coerce")
+    if acumulados.isna().all():
+        return None
+
+    debe = validos[COLS_CRM["debe"]].apply(parse_monto)
+    haber = validos[COLS_CRM["haber"]].apply(parse_monto)
+    primer_movimiento = float(debe.iloc[0]) - float(haber.iloc[0])
+
+    return float(acumulados.iloc[0]) - primer_movimiento
 
 
 def _detectar_categoria_movimiento(row):
