@@ -30,6 +30,7 @@ from bancos import obtener_banco
 # que conciliacion.py hace falta y lo incluya.
 from conciliacion import clasificar_huerfanos
 from nucleo.reporte import generar_reporte_excel
+from nucleo.cobertura import clasificar_cobertura
 
 
 def ejecutar_conciliacion(
@@ -151,6 +152,13 @@ def ejecutar_conciliacion(
             saldo_apertura, ajustes_manuales, saldo_extracto_banco,
             ajustes_sugeridos, posibles_debitos, banco_obj,
         )
+
+        # Clasificar por qué quedó sin pareja cada movimiento: lo que está
+        # compensado contra un asiento agrupado o declarado en un ajuste no
+        # es un pendiente, y mezclarlo con lo que sí falta explicar hace que
+        # el listado parezca lleno de problemas cuando la conciliación cierra.
+        resumen_cobertura = clasificar_cobertura(discrepancias, ajustes_manuales, banco_obj)
+        stats.update(resumen_cobertura)
 
         # Trazabilidad de cómo se obtuvo la apertura, para que la interfaz
         # pueda mostrar el desfase heredado en vez de un número suelto.

@@ -36,6 +36,11 @@ export interface Discrepancia {
   monto: number;
   descripcion: string;
   contraparte?: string;
+  /** Cómo queda cubierto este movimiento pese a no tener pareja individual. */
+  cobertura: "agrupada" | "ajuste" | "ninguna";
+  cobertura_detalle: string;
+  cruza_meses?: boolean;
+  nota?: string;
 }
 
 export interface Movimiento {
@@ -74,6 +79,14 @@ export interface Estadisticas {
 
   ajustes_sugeridos: AjusteSugerido[];
   ajustes_manuales: Ajuste[];
+
+  // Cobertura de los movimientos sin pareja individual
+  cubiertos_agrupados: number;
+  cubiertos_agrupados_monto: number;
+  cubiertos_por_ajuste: number;
+  cubiertos_por_ajuste_monto: number;
+  sin_justificar: number;
+  sin_justificar_monto: number;
 
   // Trazabilidad de la apertura
   saldo_crm_arranque: number | null;

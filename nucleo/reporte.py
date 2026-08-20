@@ -151,16 +151,28 @@ def _hoja_conciliacion(ws, stats, nombre_banco, periodo):
     # --- Resumen del emparejamiento ---
     ws.cell(f, 2, "RESUMEN DEL EMPAREJAMIENTO").font = F_SECCION
     f += 1
-    for etiqueta, valor in [
-        ("Movimientos en el libro mayor", stats.get("total_crm", 0)),
-        ("Movimientos en el extracto", stats.get("total_banco", 0)),
-        ("Emparejados", stats.get("total_matches", 0)),
-        ("Sin emparejar (ver hoja Pendientes)", stats.get("total_discrepancias", 0)),
+    sin_justificar = stats.get("sin_justificar", 0)
+    for etiqueta, valor, resaltar in [
+        ("Movimientos en el libro mayor", stats.get("total_crm", 0), False),
+        ("Movimientos en el extracto", stats.get("total_banco", 0), False),
+        ("Emparejados uno a uno", stats.get("total_matches", 0), False),
+        ("Compensados contra un asiento agrupado", stats.get("cubiertos_agrupados", 0), False),
+        ("Declarados en un ajuste", stats.get("cubiertos_por_ajuste", 0), False),
+        ("Sin justificar", sin_justificar, True),
     ]:
-        ws.cell(f, 2, etiqueta).font = F_NORMAL
-        c = ws.cell(f, 3, valor)
-        c.font = F_NORMAL
-        c.number_format = "#,##0"
+        c1 = ws.cell(f, 2, etiqueta)
+        c2 = ws.cell(f, 3, valor)
+        if resaltar:
+            color = AMBAR if valor else VERDE
+            c1.font = Font(name="Calibri", size=10, bold=True, color=color)
+            c2.font = Font(name="Calibri", size=10, bold=True, color=color)
+            ws.cell(f, 4,
+                    "Nada quedó sin explicar" if not valor
+                    else "Estos son los que hay que revisar (hoja Pendientes)").font = F_SUB
+        else:
+            c1.font = F_NORMAL
+            c2.font = F_NORMAL
+        c2.number_format = "#,##0"
         f += 1
 
 
@@ -169,30 +181,49 @@ def _hoja_conciliacion(ws, stats, nombre_banco, periodo):
 # ---------------------------------------------------------------------
 def _hoja_pendientes(ws, discrepancias):
     ws.sheet_view.showGridLines = False
-    encabezados = ["Origen", "Fecha", "Monto", "Descripción", "Contraparte", "Clasificación", "Nota"]
-    anchos = [10, 12, 18, 46, 30, 32, 52]
+    encabezados = ["Estado", "Origen", "Fecha", "Monto", "Descripción",
+                   "Contraparte", "Clasificación", "Por qué queda así"]
+    anchos = [24, 10, 12, 18, 44, 28, 30, 54]
     _escribir_encabezados(ws, encabezados, anchos)
 
-    ordenadas = sorted(discrepancias, key=lambda d: -abs(d.get("monto", 0)))
+    # Lo que falta explicar va primero: es lo que hay que mirar.
+    orden_estado = {"ninguna": 0, "ajuste": 1, "agrupada": 2}
+    ordenadas = sorted(
+        discrepancias,
+        key=lambda d: (orden_estado.get(d.get("cobertura", "ninguna"), 0), -abs(d.get("monto", 0))),
+    )
+    ETIQUETA = {
+        "ninguna": ("SIN JUSTIFICAR", AMBAR),
+        "ajuste": ("Declarado en un ajuste", "6B7885"),
+        "agrupada": ("Compensado (asiento agrupado)", "6B7885"),
+    }
+
     f = 2
     for d in ordenadas:
-        ws.cell(f, 1, d.get("origen", "")).font = F_NORMAL
-        c = ws.cell(f, 2, d.get("fecha"))
+        cobertura = d.get("cobertura", "ninguna")
+        texto, color = ETIQUETA.get(cobertura, ETIQUETA["ninguna"])
+        ce = ws.cell(f, 1, texto)
+        ce.font = Font(name="Calibri", size=9, bold=(cobertura == "ninguna"), color=color)
+        ws.cell(f, 2, d.get("origen", "")).font = F_NORMAL
+        c = ws.cell(f, 3, d.get("fecha"))
         c.number_format = "DD/MM/YYYY"
         c.font = F_NORMAL
-        cm = ws.cell(f, 3, d.get("monto", 0))
+        cm = ws.cell(f, 4, d.get("monto", 0))
         cm.number_format = PESOS
         cm.font = F_NORMAL
-        ws.cell(f, 4, d.get("descripcion", "")).font = F_NORMAL
-        ws.cell(f, 5, d.get("contraparte", "")).font = F_NORMAL
-        ws.cell(f, 6, d.get("tipo", "")).font = F_NORMAL
-        nota = ws.cell(f, 7, d.get("nota", ""))
-        nota.font = Font(name="Calibri", size=9, color=AMBAR if d.get("cruza_meses") else "6B7885")
+        ws.cell(f, 5, d.get("descripcion", "")).font = F_NORMAL
+        ws.cell(f, 6, d.get("contraparte", "")).font = F_NORMAL
+        ws.cell(f, 7, d.get("tipo", "")).font = F_NORMAL
+        # El detalle de la cobertura explica por qué no hace falta actuar;
+        # si no está cubierto, la nota de partida entre meses es la pista.
+        detalle = d.get("cobertura_detalle") or d.get("nota", "")
+        nota = ws.cell(f, 8, detalle)
+        nota.font = Font(name="Calibri", size=9, color=AMBAR if cobertura == "ninguna" else "6B7885")
         nota.alignment = Alignment(wrap_text=True, vertical="center")
         f += 1
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:G{max(f - 1, 1)}"
+    ws.auto_filter.ref = f"A1:H{max(f - 1, 1)}"
 
 
 # ---------------------------------------------------------------------

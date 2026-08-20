@@ -133,6 +133,14 @@ class BBVA(Banco):
     # -----------------------------------------------------------------
     # MATCHING ESPECÍFICO (se completa en el siguiente bloque)
     # -----------------------------------------------------------------
+    def es_gasto_bancario(self, descripcion):
+        """
+        Indica si una descripción del extracto corresponde a un cargo del
+        banco (impuestos, comisiones, percepciones). Lo usa el núcleo para
+        saber qué movimientos absorbe el asiento agrupado del libro.
+        """
+        return _es_gasto_bancario_bbva(descripcion)
+
     def pasadas_matching_especificas(self, crm, banco, matches):
         """
         Ejecuta las pasadas específicas de BBVA:

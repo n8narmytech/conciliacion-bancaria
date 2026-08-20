@@ -78,11 +78,11 @@ export function PantallaResultado({
       >
         <Metrica etiqueta="Movimientos CRM" valor={stats.total_crm} />
         <Metrica etiqueta="Movimientos banco" valor={stats.total_banco} />
-        <Metrica etiqueta="Conciliados" valor={stats.total_matches} tono="ok" />
+        <Metrica etiqueta="Emparejados" valor={stats.total_matches} tono="ok" />
         <Metrica
-          etiqueta="Sin explicar"
-          valor={stats.total_discrepancias}
-          tono={stats.total_discrepancias > 0 ? "alerta" : "ok"}
+          etiqueta="Sin justificar"
+          valor={stats.sin_justificar}
+          tono={stats.sin_justificar > 0 ? "alerta" : "ok"}
         />
       </div>
 
@@ -134,10 +134,18 @@ export function PantallaResultado({
 function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }) {
   const [orden, setOrden] = useState<OrdenDiscrepancia>("monto");
   const [filtroOrigen, setFiltroOrigen] = useState<"todos" | "CRM" | "BANCO">("todos");
-  const [soloGrandes, setSoloGrandes] = useState(true);
+  const [soloGrandes, setSoloGrandes] = useState(false);
+  const sinJustificar = useMemo(
+    () => discrepancias.filter((d) => d.cobertura === "ninguna"),
+    [discrepancias],
+  );
+  // Cuando hay algo sin justificar, arrancar mostrando solo eso: es lo único
+  // que hay que revisar, y el resto convierte el listado en ruido.
+  const [soloSinJustificar, setSoloSinJustificar] = useState(sinJustificar.length > 0);
 
   const visibles = useMemo(() => {
     let lista = [...discrepancias];
+    if (soloSinJustificar) lista = lista.filter((d) => d.cobertura === "ninguna");
     if (filtroOrigen !== "todos") lista = lista.filter((d) => d.origen === filtroOrigen);
     if (soloGrandes) lista = lista.filter((d) => Math.abs(d.monto) >= 50000);
     lista.sort((a, b) =>
@@ -146,12 +154,16 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
         : (a.fecha ?? "").localeCompare(b.fecha ?? ""),
     );
     return lista;
-  }, [discrepancias, orden, filtroOrigen, soloGrandes]);
+  }, [discrepancias, orden, filtroOrigen, soloGrandes, soloSinJustificar]);
 
   return (
     <Panel
-      titulo={`Movimientos sin explicar (${discrepancias.length})`}
-      descripcion="Lo que no se pudo emparejar entre el CRM y el extracto."
+      titulo={`Movimientos sin pareja individual (${discrepancias.length})`}
+      descripcion={
+        sinJustificar.length === 0
+          ? "Ninguno quedó sin justificar: están compensados contra un asiento agrupado o declarados en un ajuste."
+          : `${sinJustificar.length} sin justificar. El resto está compensado contra un asiento agrupado o declarado en un ajuste.`
+      }
     >
       <div
         style={{
@@ -162,6 +174,13 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
           alignItems: "center",
         }}
       >
+        <FiltroBoton
+          activo={soloSinJustificar}
+          onClick={() => setSoloSinJustificar(!soloSinJustificar)}
+        >
+          Solo sin justificar ({sinJustificar.length})
+        </FiltroBoton>
+        <span style={{ width: 1, height: 20, background: "var(--borde)" }} />
         <FiltroBoton activo={filtroOrigen === "todos"} onClick={() => setFiltroOrigen("todos")}>
           Todos
         </FiltroBoton>
@@ -193,12 +212,12 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.83rem" }}>
             <thead>
               <tr>
-                {["Origen", "Fecha", "Monto", "Descripción", "Tipo"].map((h, i) => (
+                {["Estado", "Origen", "Fecha", "Monto", "Descripción", "Tipo"].map((h, i) => (
                   <th
                     key={h}
                     className="etiqueta"
                     style={{
-                      textAlign: i === 2 ? "right" : "left",
+                      textAlign: i === 3 ? "right" : "left",
                       padding: "0.4rem 0.5rem",
                       borderBottom: "1px solid var(--borde-fuerte)",
                       position: "sticky",
@@ -214,6 +233,15 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
             <tbody>
               {visibles.map((d, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid var(--borde)" }}>
+                  <td style={{ padding: "0.42rem 0.5rem" }} title={d.cobertura_detalle}>
+                    {d.cobertura === "ninguna" ? (
+                      <Chip tono="alerta">sin justificar</Chip>
+                    ) : d.cobertura === "ajuste" ? (
+                      <Chip tono="neutro">en un ajuste</Chip>
+                    ) : (
+                      <Chip tono="ok">compensado</Chip>
+                    )}
+                  </td>
                   <td style={{ padding: "0.42rem 0.5rem" }}>
                     <Chip tono={d.origen === "CRM" ? "acento" : "neutro"}>{d.origen}</Chip>
                   </td>
