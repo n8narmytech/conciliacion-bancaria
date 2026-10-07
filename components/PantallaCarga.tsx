@@ -1,33 +1,16 @@
 /**
  * Pantalla 1 — Carga de archivos y saldos.
  *
- * Elegir banco, subir el libro mayor del CRM y el extracto bancario, y
- * confirmar el saldo de apertura antes de correr la conciliación.
+ * Elegir banco y subir el libro mayor del CRM y el extracto bancario.
+ * El saldo de apertura no se pide: el sistema lo calcula a partir del
+ * extracto (ver el orquestador).
  */
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import type { Banco } from "@/lib/tipos";
-import { pesos } from "@/lib/formato";
-import { Aviso, Boton, CampoNumero, Panel } from "./ui";
-
-/**
- * Bancos cuyo extracto NO informa el saldo de apertura del período.
- *
- * En Santander y Galicia el archivo trae el saldo con el que abre el mes
- * —que es el cierre del mes anterior— así que el sistema lo lee solo y no
- * hay que cargar nada. El formato de BBVA no lo expone, y ahí sí hay que
- * tomarlo del extracto anterior.
- */
-const REQUIERE_CIERRE_MANUAL = new Set(["bbva"]);
-
-/** Último cierre conocido, para no ir a buscar el extracto anterior. */
-const ULTIMO_CIERRE_CONOCIDO: Record<string, { saldo: number; periodo: string }> = {
-  bbva: { saldo: 199004.24, periodo: "junio 2026" },
-  santander: { saldo: 37245619.46, periodo: "junio 2026" },
-  galicia: { saldo: 596813.79, periodo: "junio 2026" },
-};
+import { Aviso, Boton, Panel } from "./ui";
 
 export function PantallaCarga({
   bancos,
@@ -40,7 +23,6 @@ export function PantallaCarga({
     banco: string;
     archivoCrm: File;
     archivoBanco: File;
-    saldoExtractoAnterior?: number;
   }) => void;
   procesando: boolean;
   error: string | null;
@@ -48,23 +30,11 @@ export function PantallaCarga({
   const [banco, setBanco] = useState<string>("");
   const [archivoCrm, setArchivoCrm] = useState<File | null>(null);
   const [archivoBanco, setArchivoBanco] = useState<File | null>(null);
-  const [saldoExtractoAnterior, setSaldoExtractoAnterior] = useState<number>(0);
-  const [cierreTocado, setCierreTocado] = useState(false);
-
-  // Al elegir banco, precargar el último cierre conocido como referencia
-  useEffect(() => {
-    if (banco && !cierreTocado) {
-      setSaldoExtractoAnterior(ULTIMO_CIERRE_CONOCIDO[banco]?.saldo ?? 0);
-    }
-  }, [banco, cierreTocado]);
-
   useEffect(() => {
     if (!banco && bancos.length > 0) setBanco(bancos[0].codigo);
   }, [bancos, banco]);
 
   const bancoElegido = bancos.find((b) => b.codigo === banco);
-  const referencia = ULTIMO_CIERRE_CONOCIDO[banco];
-  const pideCierre = REQUIERE_CIERRE_MANUAL.has(banco);
   const listo = Boolean(banco && archivoCrm && archivoBanco);
 
   return (
@@ -118,7 +88,7 @@ export function PantallaCarga({
 
       <Panel
         titulo="Archivos del período"
-        descripcion="El libro mayor exportado del CRM y el extracto que descargaste del banco."
+        descripcion="El libro mayor exportado del CRM y el extracto que descargaste del banco. No hace falta cargar ningún saldo: el de apertura se calcula a partir del extracto."
       >
         <div
           style={{
@@ -140,44 +110,6 @@ export function PantallaCarga({
         </div>
       </Panel>
 
-      <Panel
-        titulo="Cierre del mes anterior"
-        descripcion={
-          pideCierre
-            ? "El extracto de este banco no informa con qué saldo abre el mes, así que hay que tomarlo del extracto anterior."
-            : "El sistema lo lee del propio extracto: no hace falta cargarlo."
-        }
-      >
-        {!pideCierre && (
-          <p style={{ margin: "0 0 0.9rem", fontSize: "0.84rem", color: "var(--ok)" }}>
-            El extracto de {bancoElegido?.nombre ?? "este banco"} informa el saldo de
-            apertura del período. El saldo de apertura se calcula solo a partir de ahí.
-          </p>
-        )}
-        <div style={{ maxWidth: 380, display: pideCierre ? "block" : "none" }}>
-          <CampoNumero
-            etiqueta="Saldo del extracto al cierre del mes anterior"
-            valor={saldoExtractoAnterior}
-            onChange={(v) => {
-              setCierreTocado(true);
-              setSaldoExtractoAnterior(v);
-            }}
-            ayuda={
-              cierreTocado
-                ? "Valor ingresado manualmente."
-                : referencia
-                  ? `Último cierre registrado (${referencia.periodo}): ${pesos(referencia.saldo)}. Cambialo si vas a conciliar otro período.`
-                  : "Es el saldo final del extracto del mes anterior."
-            }
-          />
-        </div>
-        <p style={{ margin: "0.75rem 0 0", fontSize: "0.79rem", color: "var(--tinta-suave)" }}>
-          El saldo de apertura no se informa: se deriva. Si el libro abre en el mismo
-          saldo con que cerró el banco, no hay arrastre; si difieren, esa diferencia es
-          lo que quedó pendiente del mes anterior.
-        </p>
-      </Panel>
-
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Boton
           variante="primario"
@@ -188,7 +120,6 @@ export function PantallaCarga({
               banco,
               archivoCrm: archivoCrm!,
               archivoBanco: archivoBanco!,
-              saldoExtractoAnterior: pideCierre ? saldoExtractoAnterior : undefined,
             })
           }
         >

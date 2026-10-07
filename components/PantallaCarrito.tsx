@@ -117,6 +117,14 @@ export function PantallaCarrito({
         </div>
       </Panel>
 
+      {stats.apertura_origen !== "derivada" && (
+        <Aviso tono="alerta" titulo="No se pudo calcular el saldo de apertura">
+          El extracto no trae el saldo de cierre ni permite deducirlo, así que el
+          cálculo se hizo sin arrastre del mes anterior. Si la diferencia no
+          cierra, revisá que el extracto sea el archivo completo del banco.
+        </Aviso>
+      )}
+
       {/* ---- Sugerencias automáticas ---- */}
       {sugerenciasPendientes.length > 0 && (
         <Panel

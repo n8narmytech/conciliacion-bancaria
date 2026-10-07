@@ -123,10 +123,21 @@ class BBVA(Banco):
         out["estado"] = "pendiente"
 
         # Metadata detectada
+        saldo_final = _detectar_saldo_final(path, fmt)
+        saldo_inicial = fmt["saldo_inicial"]
+
+        # El formato clásico no informa el saldo con que abre el período,
+        # pero trae el de cierre ("Saldo Disponible") y TODOS los movimientos
+        # del mes, así que la apertura se obtiene restándolos. Verificado
+        # contra marzo-junio 2026: la apertura calculada de cada mes coincide
+        # al centavo con el cierre del extracto anterior.
+        if saldo_inicial is None and saldo_final is not None and len(out):
+            saldo_inicial = round(float(saldo_final) - float(out["monto"].sum()), 2)
+
         out.attrs["formato"] = fmt["tipo"]
-        out.attrs["saldo_inicial_detectado"] = fmt["saldo_inicial"]
+        out.attrs["saldo_inicial_detectado"] = saldo_inicial
         out.attrs["path_archivo"] = path
-        out.attrs["saldo_final_detectado"] = _detectar_saldo_final(path, fmt)
+        out.attrs["saldo_final_detectado"] = saldo_final
 
         return out
 
