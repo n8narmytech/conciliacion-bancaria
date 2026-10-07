@@ -33,6 +33,16 @@ from nucleo.reporte import generar_reporte_excel
 from nucleo.cobertura import clasificar_cobertura
 
 
+class ErrorDeValidacion(Exception):
+    """
+    Problema con los archivos que se subieron, no con el sistema.
+
+    El mensaje está escrito para quien está conciliando y se muestra tal
+    cual en la pantalla, sin el detalle técnico que acompaña a los errores
+    inesperados.
+    """
+
+
 def ejecutar_conciliacion(
     banco_codigo,
     archivo_crm,
@@ -99,6 +109,11 @@ def ejecutar_conciliacion(
         # 3. Cargar extracto (específico del banco)
         reportar("carga", f"Cargando extracto {banco_obj.nombre}...", 15)
         banco = banco_obj.cargar_extracto(archivo_banco)
+
+        # 3a. Los dos archivos tienen que ser del mismo mes. Si no lo son,
+        # el cálculo igual "funciona" y devuelve un número creíble pero
+        # equivocado, que es el peor resultado posible para un cierre.
+        _validar_mismo_periodo(crm, banco)
 
         # 3b. Derivar el saldo de apertura.
         #
@@ -197,6 +212,10 @@ def ejecutar_conciliacion(
 
     except Exception as e:
         import traceback
+        if isinstance(e, ErrorDeValidacion):
+            mensaje = str(e)
+        else:
+            mensaje = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
         return {
             "crm": None,
             "banco": None,
@@ -205,26 +224,61 @@ def ejecutar_conciliacion(
             "banco_obj": None,
             "estadisticas": {},
             "excel_bytes": None,
-            "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+            "error": mensaje,
         }
+
+
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+         "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def _mes_predominante(df):
+    """
+    El (año, mes) al que pertenece la mayoría de los movimientos, o None si
+    el archivo no trae fechas.
+
+    Se usa el predominante y no el primero o el último porque los extractos
+    suelen traer algún cargo fechado en el mes siguiente (impuestos que el
+    banco imputa al día hábil posterior).
+    """
+    from collections import Counter
+    try:
+        fechas = [f for f in df["fecha"] if f is not None and hasattr(f, "month")]
+    except Exception:
+        return None
+    if not fechas:
+        return None
+    (anio, mes), _ = Counter((f.year, f.month) for f in fechas).most_common(1)[0]
+    return anio, mes
+
+
+def _nombre_periodo(periodo):
+    anio, mes = periodo
+    return f"{MESES[mes - 1]} {anio}"
 
 
 def _describir_periodo(banco_df):
     """Arma un texto tipo "junio 2026" a partir de las fechas del extracto."""
-    MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
-             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
-    try:
-        fechas = [f for f in banco_df["fecha"] if f is not None]
-        if not fechas:
-            return ""
-        # El mes predominante, no el ultimo movimiento: los extractos suelen
-        # traer algun cargo con fecha del mes siguiente (impuestos que el
-        # banco imputa al dia habil posterior) y eso rotularia mal el periodo.
-        from collections import Counter
-        (anio, mes), _ = Counter((f.year, f.month) for f in fechas).most_common(1)[0]
-        return f"{MESES[mes - 1]} {anio}"
-    except Exception:
-        return ""
+    periodo = _mes_predominante(banco_df)
+    return _nombre_periodo(periodo) if periodo else ""
+
+
+def _validar_mismo_periodo(crm_df, banco_df):
+    """
+    Frena la conciliación si el libro mayor y el extracto son de meses
+    distintos. Si alguno de los dos no trae fechas, no valida: ese caso ya
+    falla por su cuenta más adelante con un error más específico.
+    """
+    periodo_crm = _mes_predominante(crm_df)
+    periodo_banco = _mes_predominante(banco_df)
+    if periodo_crm is None or periodo_banco is None:
+        return
+    if periodo_crm != periodo_banco:
+        raise ErrorDeValidacion(
+            f"El libro mayor es de {_nombre_periodo(periodo_crm)} y el extracto "
+            f"bancario es de {_nombre_periodo(periodo_banco)}. Los dos archivos "
+            f"tienen que ser del mismo mes: revisá que hayas subido los correctos."
+        )
 
 
 def _marcar_partidas_entre_meses(discrepancias):
