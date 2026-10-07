@@ -330,6 +330,14 @@ def _detectar_gastos_bancarios_pendientes(banco_df):
         if abs(total) < 1.0:
             return None
 
+        # Qué movimientos componen el ajuste, para que al aceptarlo se den
+        # por cubiertos uno por uno y no queden sueltos en el listado.
+        movimientos = [
+            {"origen": "BANCO", "fila": int(f)}
+            for f in pendientes["fila_origen"]
+            if f is not None
+        ]
+
         return {
             "concepto": "Gastos bancarios no contabilizados",
             "monto": round(total, 2),
@@ -340,6 +348,7 @@ def _detectar_gastos_bancarios_pendientes(banco_df):
                 f"resumen del mes antes de aplicar.**"
             ),
             "cantidad_mov": cantidad,
+            "movimientos": movimientos,
         }
     except Exception:
         return None
@@ -362,6 +371,7 @@ def _detectar_debitos_pendientes(discrepancias):
 
     total = 0.0
     cantidad = 0
+    movimientos = []
     for d in discrepancias:
         if d.get("origen") != "CRM" or d.get("tipo") != "FALTANTE EN BANCO":
             continue
@@ -376,6 +386,7 @@ def _detectar_debitos_pendientes(discrepancias):
             continue
         total += d["monto"]
         cantidad += 1
+        movimientos.append({"origen": "CRM", "fila": d.get("fila")})
 
     if cantidad == 0 or abs(total) < 1000:
         return None
@@ -390,4 +401,5 @@ def _detectar_debitos_pendientes(discrepancias):
             f"verificá cada operación antes de aplicar.**"
         ),
         "cantidad_mov": cantidad,
+        "movimientos": movimientos,
     }

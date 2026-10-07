@@ -208,18 +208,50 @@ def _mejor_combinacion(agrupadores, objetivo):
 
 def _marcar_cubiertos_por_ajustes(discrepancias, ajustes_manuales):
     """
-    Marca los movimientos cuyo importe coincide con un ajuste cargado.
+    Marca los movimientos que quedan explicados por un ajuste cargado.
 
-    Se compara por valor absoluto porque el ajuste puede llevar el signo
-    invertido respecto del movimiento (un cobro del libro que todavía no
-    entró se neutraliza con un ajuste negativo).
+    Dos formas, en este orden:
+
+      1. El ajuste trae la lista de movimientos que lo componen. Es el caso
+         de los que sugiere el sistema: el de gastos bancarios de Galicia,
+         por ejemplo, suma decenas de cargos, y sin la lista no habría
+         forma de saber cuáles cubre.
+      2. Si no la trae (un ajuste cargado a mano), se busca un movimiento
+         con el mismo importe. Se compara por valor absoluto porque el
+         ajuste puede llevar el signo invertido respecto del movimiento:
+         un cobro del libro que todavía no entró se neutraliza con un
+         ajuste negativo.
     """
     if not ajustes_manuales:
         return
 
+    por_clave = {}
+    for d in discrepancias:
+        if d.get("fila") is not None:
+            por_clave[(d.get("origen"), _clave_fila(d.get("fila")))] = d
+
+    sin_lista = []
+    for a in ajustes_manuales:
+        concepto = a.get("concepto", "ajuste")
+        movimientos = a.get("movimientos") or []
+        marcados = 0
+        for m in movimientos:
+            d = por_clave.get((m.get("origen"), _clave_fila(m.get("fila"))))
+            if d is not None and d["cobertura"] == "ninguna":
+                d["cobertura"] = "ajuste"
+                marcados += 1
+        if marcados:
+            detalle = f"Incluido en el ajuste «{concepto}» ({len(movimientos)} movimiento(s))."
+            for m in movimientos:
+                d = por_clave.get((m.get("origen"), _clave_fila(m.get("fila"))))
+                if d is not None and d["cobertura"] == "ajuste" and not d["cobertura_detalle"]:
+                    d["cobertura_detalle"] = detalle
+        else:
+            sin_lista.append(a)
+
     disponibles = [
         (a.get("concepto", "ajuste"), abs(float(a.get("monto", 0))))
-        for a in ajustes_manuales
+        for a in sin_lista
         if abs(float(a.get("monto", 0))) > 0.01
     ]
     usados = set()
@@ -236,3 +268,14 @@ def _marcar_cubiertos_por_ajustes(discrepancias, ajustes_manuales):
                 d["cobertura_detalle"] = f"Declarado en el ajuste «{concepto}»."
                 usados.add(i)
                 break
+
+
+def _clave_fila(fila):
+    """Normaliza el número de fila: puede llegar como int, float o texto
+    después de pasar por la interfaz."""
+    try:
+        return int(float(fila))
+    except (TypeError, ValueError):
+        return fila
+
+

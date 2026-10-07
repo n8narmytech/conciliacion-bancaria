@@ -175,6 +175,7 @@ export function PantallaCarrito({
                           monto: s.monto,
                           cantidad_mov: s.cantidad_mov,
                           automatico: true,
+                          movimientos: s.movimientos,
                         },
                       ])
                     }

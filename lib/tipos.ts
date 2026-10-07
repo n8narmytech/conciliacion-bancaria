@@ -12,11 +12,19 @@ export interface Banco {
 }
 
 /** Ajuste que el sistema detecta solo a partir de los archivos. */
+/** Movimiento identificado por su origen y su fila en el archivo. */
+export interface ReferenciaMovimiento {
+  origen: "CRM" | "BANCO";
+  fila: number;
+}
+
 export interface AjusteSugerido {
   concepto: string;
   monto: number;
   explicacion: string;
   cantidad_mov: number;
+  /** Movimientos que suma el ajuste; al aceptarlo quedan cubiertos. */
+  movimientos?: ReferenciaMovimiento[];
 }
 
 /** Ajuste cargado en el carrito (sugerido y aceptado, o manual). */
@@ -26,6 +34,8 @@ export interface Ajuste {
   cantidad_mov: number;
   /** true cuando vino de una sugerencia automática, para distinguirlo en la UI */
   automatico?: boolean;
+  /** Movimientos que explica, cuando el ajuste vino de una sugerencia. */
+  movimientos?: ReferenciaMovimiento[];
 }
 
 export interface Discrepancia {
