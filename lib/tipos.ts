@@ -30,7 +30,8 @@ export interface Ajuste {
 
 export interface Discrepancia {
   tipo: string;
-  origen: "CRM" | "BANCO";
+  /** GRUPO: residuo entre los cargos del banco y el asiento que los agrupa. */
+  origen: "CRM" | "BANCO" | "GRUPO";
   fila: number;
   fecha: string | null;
   monto: number;

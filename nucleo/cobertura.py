@@ -85,8 +85,26 @@ def _es_gasto_bancario(discrepancia, banco_obj):
 
 def _marcar_grupo_gastos(discrepancias, banco_obj):
     """
-    Si los cargos del banco suman lo mismo que el asiento agrupado del
-    libro, marca a todos como compensados entre sí.
+    Compensa los cargos del banco contra el asiento que los agrupa en el
+    libro ("- Proveedores").
+
+    Que las dos sumas coincidan al centavo es el caso ideal, pero en la
+    práctica aparecen tres desvíos y ninguno debería impedir reconocer el
+    grupo:
+
+      - Sobra un asiento en el libro: hay más de un "- Proveedores" y uno
+        es de otro mes. Se usa la combinación de asientos que mejor
+        coincide con los cargos.
+      - Sobra un cargo en el banco: una comisión que el libro registró
+        aparte del asiento agrupado. Se lo aparta y queda sin justificar,
+        con una nota que dice por qué.
+      - Queda un residuo chico, repartido en el redondeo de cientos de
+        cargos. Se compensa el grupo y el residuo se muestra como una
+        sola línea sin justificar, en vez de dejar todos los cargos
+        sueltos.
+
+    Si después de eso el residuo sigue por encima del umbral, el grupo no
+    se compensa: es una diferencia real y tiene que verse completa.
     """
     gastos = [d for d in discrepancias if _es_gasto_bancario(d, banco_obj)]
     agrupadores = [
@@ -98,18 +116,94 @@ def _marcar_grupo_gastos(discrepancias, banco_obj):
         return
 
     suma_gastos = sum(d["monto"] for d in gastos)
-    suma_agrupadores = sum(d["monto"] for d in agrupadores)
 
-    if abs(suma_gastos - suma_agrupadores) > TOLERANCIA_GRUPO:
+    # 1. Qué asientos agrupadores corresponden a estos cargos
+    usados = _mejor_combinacion(agrupadores, suma_gastos)
+    suma_asientos = sum(d["monto"] for d in usados)
+    residuo = suma_gastos - suma_asientos
+
+    # 2. Si no alcanza, apartar el cargo que sobra
+    apartado = None
+    if abs(residuo) > _umbral(suma_asientos):
+        candidato = min(gastos, key=lambda d: abs(residuo - d["monto"]))
+        if abs(residuo - candidato["monto"]) <= _umbral(suma_asientos):
+            apartado = candidato
+            residuo -= candidato["monto"]
+
+    # 3. ¿Se reconoce el grupo?
+    if abs(residuo) > _umbral(suma_asientos):
         return
 
+    compensados = [d for d in gastos if d is not apartado]
     detalle = (
-        f"Compensado: {len(gastos)} cargo(s) del banco por "
-        f"${abs(suma_gastos):,.2f} contra el asiento agrupado del libro."
+        f"Compensado: {len(compensados)} cargo(s) del banco por "
+        f"${abs(sum(d['monto'] for d in compensados)):,.2f} contra el asiento "
+        f"agrupado del libro."
     )
-    for d in gastos + agrupadores:
+    if abs(residuo) > 0.01:
+        detalle += f" Entre ambos quedan ${residuo:,.2f} de diferencia, que se muestran aparte."
+    for d in compensados + usados:
         d["cobertura"] = "agrupada"
         d["cobertura_detalle"] = detalle
+
+    if apartado is not None:
+        apartado["cobertura_detalle"] = (
+            "No forma parte del asiento agrupado de gastos: el libro no lo "
+            "incluyó ahí. Verificá si está contabilizado por separado."
+        )
+
+    for d in agrupadores:
+        if d not in usados:
+            d["cobertura_detalle"] = (
+                "Asiento agrupado que no corresponde a los cargos de este mes: "
+                "verificá si es del mes anterior o posterior."
+            )
+
+    if abs(residuo) > 0.01:
+        referencia = usados[-1]
+        discrepancias.append({
+            "tipo": "DIFERENCIA DE GRUPO",
+            "origen": "GRUPO",
+            "fila": None,
+            "fecha": referencia.get("fecha"),
+            "monto": round(residuo, 2),
+            "descripcion": "Diferencia entre los cargos del banco y el asiento agrupado de gastos",
+            "contraparte": "",
+            "cobertura": "ninguna",
+            "cobertura_detalle": (
+                f"Los cargos de impuestos y comisiones del banco suman "
+                f"${abs(suma_gastos - (apartado['monto'] if apartado else 0)):,.2f} "
+                f"y el asiento agrupado ${abs(suma_asientos):,.2f}. "
+                f"La diferencia suele ser redondeo o un cargo clasificado distinto."
+            ),
+        })
+
+
+# Margen para reconocer el grupo: el residuo tiene que ser menor al 1% del
+# asiento. Los residuos reales observados están entre 0,02% y 0,06%; una
+# diferencia mayor no es redondeo y se deja visible completa.
+UMBRAL_GRUPO_RELATIVO = 0.01
+
+
+def _umbral(suma_asientos):
+    return max(TOLERANCIA_GRUPO, abs(suma_asientos) * UMBRAL_GRUPO_RELATIVO)
+
+
+def _mejor_combinacion(agrupadores, objetivo):
+    """
+    De los asientos agrupadores, la combinación cuya suma más se acerca a la
+    de los cargos. Casi siempre hay uno o dos, así que se prueban todas.
+    """
+    from itertools import combinations
+
+    candidatos = agrupadores[:8]
+    mejor, mejor_dif = list(candidatos), None
+    for n in range(1, len(candidatos) + 1):
+        for combo in combinations(candidatos, n):
+            dif = abs(objetivo - sum(d["monto"] for d in combo))
+            if mejor_dif is None or dif < mejor_dif:
+                mejor, mejor_dif = list(combo), dif
+    return mejor
 
 
 def _marcar_cubiertos_por_ajustes(discrepancias, ajustes_manuales):
