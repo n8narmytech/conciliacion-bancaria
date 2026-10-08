@@ -35,7 +35,7 @@ CRM_HEADER_ROW = 3
 # ---------------------------------------------------------------------
 # FUNCIÓN PRINCIPAL
 # ---------------------------------------------------------------------
-def cargar_crm(path):
+def cargar_crm(path, eliminar_dobles=True):
     """
     Carga el Excel del CRM (libro mayor GBP) y lo normaliza a formato interno.
 
@@ -111,8 +111,10 @@ def cargar_crm(path):
     out["categoria_especial"] = out.apply(_detectar_categoria_movimiento, axis=1)
 
     # === Eliminar partidas dobles del CRM (para el matching, no del saldo) ===
-    # Ver nota importante abajo.
-    out = _eliminar_partidas_dobles(out)
+    # El orquestador pide no hacerlo acá (eliminar_dobles=False) para poder
+    # decidirlo después de leer el extracto: ver eliminar_partidas_dobles.
+    if eliminar_dobles:
+        out = _eliminar_partidas_dobles(out)
 
     out["origen"] = "CRM"
     out["fila_origen"] = out.index + 2
@@ -197,23 +199,67 @@ def _detectar_categoria_movimiento(row):
     return "normal"
 
 
-def _eliminar_partidas_dobles(out):
+def eliminar_partidas_dobles(crm, banco=None, dias=5):
     """
-    Elimina pares espejados de partidas dobles del DataFrame.
+    Saca del matching los pares espejados del libro, salvo los que son
+    movimientos bancarios reales.
 
-    NOTA IMPORTANTE:
-    Ya usamos "Acumulado Mensual" del propio archivo como saldo CRM (que es
-    el número que usa la contadora). Eliminar partidas dobles NO altera el
-    saldo final del cálculo — solo limpia el matching contra el banco.
+    Un par espejado es un mismo asiento con el mismo importe de un lado y
+    del otro. Casi siempre es una corrección dentro del libro (se registró
+    algo y se anuló) y no tiene nada que ver con el banco: dejarlo aparece
+    como dos pendientes ficticios.
 
-    Las partidas dobles del CRM son operaciones contables registradas dos
-    veces (mismo asiento + misma contraparte + montos opuestos) que aparecen
-    como cobros pendientes ficticios en el reporte.
+    Pero a veces contabilidad registra en un solo asiento dos movimientos
+    bancarios reales que se compensan: una transferencia que entra y la
+    suscripción a un fondo que sale el mismo día por el mismo monto
+    (Santander julio 2026, ±30 M y ±16 M; Galicia mayo 2026, ±8 M). Si el
+    extracto tiene esa ida y vuelta en los días cercanos, el par se
+    conserva para que se empareje con el banco.
+
+    Sin extracto (banco=None) se comporta como antes: elimina todos.
     """
-    if "comprobante" not in out.columns or not out["comprobante"].any():
-        return out
+    pares = _pares_espejados(crm)
+    if not pares:
+        return crm
 
     a_eliminar = set()
+    for i, j in pares:
+        if banco is not None and _banco_tiene_ida_y_vuelta(banco, crm.at[i, "monto"], crm.at[i, "fecha"], dias):
+            continue
+        a_eliminar.update((i, j))
+
+    if not a_eliminar:
+        return crm
+    attrs = dict(crm.attrs)
+    out = crm.drop(list(a_eliminar)).reset_index(drop=True)
+    out.attrs.update(attrs)
+    return out
+
+
+def _banco_tiene_ida_y_vuelta(banco, monto, fecha, dias):
+    """¿El extracto tiene un crédito y un débito por ese importe cerca de esa fecha?"""
+    importe = abs(float(monto))
+    cerca = banco[
+        ((banco["monto"].abs() - importe).abs() < 0.01)
+        & banco["fecha"].apply(lambda f: f is not None and abs((f - fecha).days) <= dias)
+    ]
+    return (cerca["monto"] > 0).any() and (cerca["monto"] < 0).any()
+
+
+def _eliminar_partidas_dobles(out):
+    """Elimina todos los pares espejados (comportamiento al leer el mayor)."""
+    return eliminar_partidas_dobles(out, banco=None)
+
+
+def _pares_espejados(out):
+    """
+    Pares de filas del mismo asiento y la misma contraparte con importes
+    opuestos. Devuelve una lista de (índice, índice).
+    """
+    if "comprobante" not in out.columns or not out["comprobante"].any():
+        return []
+
+    pares = []
     for (comp, cp), grupo in out.groupby(["comprobante", "contraparte_orig"]):
         if len(grupo) < 2 or not comp:
             continue
@@ -231,13 +277,8 @@ def _eliminar_partidas_dobles(out):
                 monto_j = out.at[j, "monto"]
                 # Misma cantidad absoluta, signos opuestos → partida doble
                 if abs(monto_i + monto_j) < 0.01 and (monto_i * monto_j) < 0:
-                    a_eliminar.add(i)
-                    a_eliminar.add(j)
+                    pares.append((i, j))
                     usados.add(i)
                     usados.add(j)
                     break
-
-    if a_eliminar:
-        out = out.drop(list(a_eliminar)).reset_index(drop=True)
-
-    return out
+    return pares

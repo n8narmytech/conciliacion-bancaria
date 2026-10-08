@@ -27,7 +27,10 @@ ESPERADOS = {
     ("bbva",      "junio"): (-635_680.85,       457_829.05,   174,           3),
     ("santander", "mayo"):  (13_977_083.28,    -188_682.60,   132,           8),
     ("santander", "junio"): (182_546.06,        401_522.04,   133,           2),
-    ("galicia",   "mayo"):  (0.58,              871_931.11,    58,           3),
+    # Galicia mayo pasó de 58 a 60 emparejados y de 3 a 1 sin justificar al
+    # dejar de descartar el asiento 38906 (±8 M): era la transferencia Coelsa
+    # y la suscripción FIMA del 26/05, registradas en un mismo asiento.
+    ("galicia",   "mayo"):  (0.58,              871_931.11,    60,           1),
     ("galicia",   "junio"): (-871_930.53,      -434_244.86,    37,          60),
 }
 

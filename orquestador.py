@@ -16,7 +16,7 @@ está probada. En una siguiente iteración se puede extraer al núcleo.
 
 import io
 
-from nucleo.carga_crm import cargar_crm
+from nucleo.carga_crm import cargar_crm, eliminar_partidas_dobles
 from nucleo.matching_base import pasada_1_match_exacto, pasada_2_match_tolerancia
 from nucleo.ajustes_comunes import (
     posibles_debitos_pendientes_generico,
@@ -104,7 +104,10 @@ def ejecutar_conciliacion(
 
         # 2. Cargar CRM (común a todos los bancos)
         reportar("carga", "Cargando CRM...", 10)
-        crm = cargar_crm(archivo_crm)
+        # Las partidas dobles se sacan después de leer el extracto: para
+        # decidir si un par espejado del libro es una corrección o dos
+        # movimientos bancarios reales hay que mirar el banco.
+        crm = cargar_crm(archivo_crm, eliminar_dobles=False)
 
         # 3. Cargar extracto (específico del banco)
         reportar("carga", f"Cargando extracto {banco_obj.nombre}...", 15)
@@ -115,7 +118,11 @@ def ejecutar_conciliacion(
         # equivocado, que es el peor resultado posible para un cierre.
         _validar_mismo_periodo(crm, banco)
 
-        # 3b. Derivar el saldo de apertura.
+        # 3b. Sacar del matching los pares espejados del libro, salvo los
+        # que tienen su ida y vuelta en el extracto.
+        crm = eliminar_partidas_dobles(crm, banco)
+
+        # 3c. Derivar el saldo de apertura.
         #
         # El cierre del mes anterior puede venir de dos lados: informado por
         # quien concilia, o leído del propio extracto, porque el saldo con el
