@@ -1,0 +1,4 @@
+# Dependencias para desarrollar y correr los tests. No se instalan en Vercel,
+# que usa requirements.txt.
+-r requirements.txt
+pytest>=8.0
