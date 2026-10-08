@@ -21,11 +21,15 @@ pytestmark = pytest.mark.datos
 # Sin ajustes: lo que devuelve el sistema solo, antes de cualquier decisión.
 ESPERADOS = {
     #  banco       mes       apertura         diferencia      emparejados  sin justificar
-    ("bbva",      "marzo"): (2_149_232.03,   -1_585_828.04,   208,          12),
-    ("bbva",      "abril"): (3_735_060.07,   -1_358_075.22,   175,          21),
-    ("bbva",      "mayo"):  (937_834.32,      1_573_515.17,   212,          11),
+    # Los cuatro siguientes cambiaron al sumar la pasada "uno contra varios":
+    # dos PAGO VISA-IN registrados en un solo asiento (BBVA marzo, abril y
+    # mayo), dos operaciones de fondos (BBVA mayo) y transferencias propias y
+    # un rescate de fondos (Santander mayo). Revisados uno por uno.
+    ("bbva",      "marzo"): (2_149_232.03,   -1_585_828.04,   209,           9),
+    ("bbva",      "abril"): (3_735_060.07,   -1_358_075.22,   176,          18),
+    ("bbva",      "mayo"):  (937_834.32,      1_573_515.17,   214,           5),
     ("bbva",      "junio"): (-635_680.85,       457_829.05,   174,           3),
-    ("santander", "mayo"):  (13_977_083.28,    -188_682.60,   132,           8),
+    ("santander", "mayo"):  (13_977_083.28,    -188_682.60,   134,           2),
     ("santander", "junio"): (182_546.06,        401_522.04,   133,           2),
     # Galicia mayo pasó de 58 a 60 emparejados y de 3 a 1 sin justificar al
     # dejar de descartar el asiento 38906 (±8 M): era la transferencia Coelsa

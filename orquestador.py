@@ -17,7 +17,11 @@ está probada. En una siguiente iteración se puede extraer al núcleo.
 import io
 
 from nucleo.carga_crm import cargar_crm, eliminar_partidas_dobles
-from nucleo.matching_base import pasada_1_match_exacto, pasada_2_match_tolerancia
+from nucleo.matching_base import (
+    pasada_1_match_exacto,
+    pasada_2_match_tolerancia,
+    pasada_3_uno_contra_varios,
+)
 from nucleo.ajustes_comunes import (
     posibles_debitos_pendientes_generico,
     huerfanos_banco_para_carrito,
@@ -152,6 +156,9 @@ def ejecutar_conciliacion(
 
         reportar("matching", "Match con tolerancia...", 55)
         pasada_2_match_tolerancia(crm, banco, matches)
+
+        reportar("matching", "Uno contra varios...", 60)
+        pasada_3_uno_contra_varios(crm, banco, matches)
 
         # 5. Clasificar huérfanos (delegado al viejo por ahora)
         reportar("reporte", "Clasificando discrepancias...", 70)
