@@ -1,17 +1,12 @@
-# Dependencias de la API de conciliación.
+# Dependencias de la API de conciliación. Vercel las instala desde este
+# archivo; las de desarrollo y tests están en requirements-dev.txt.
 #
-# Vercel las instala desde este archivo (el de la raíz del proyecto).
+# Sin versiones clavadas, salvo pandas: un pin viejo de fastapi resultó
+# incompatible con la versión de starlette que resolvía Vercel, y fastapi
+# quedaba sin instalar.
 #
-# Sin versiones clavadas a propósito: el entorno de Vercel resuelve a las
-# versiones actuales de cada paquete, y un pin viejo de fastapi terminaba
-# siendo incompatible con la versión de starlette que instalaba el
-# resolvedor — el resultado era que fastapi quedaba sin instalar y la
-# función fallaba con ModuleNotFoundError.
-#
-# NOTA: Streamlit no está acá. En esta rama el frontend es Next.js; la
-# interfaz vieja (app.py) vive en la rama main con su propio requirements.
-# Además, streamlit arrastra pyarrow (~46 MB) y engorda el bundle sin
-# ningún uso.
+# Streamlit no está a propósito: la interfaz es Next.js, y además arrastraba
+# pyarrow (~46 MB), con lo que la función superaba el límite de Vercel.
 
 fastapi>=0.115.0
 python-multipart>=0.0.9

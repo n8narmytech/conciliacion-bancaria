@@ -1,87 +1,151 @@
-# Sistema de Conciliación Bancaria
+# Conciliación bancaria
 
-Sistema interno de ARMY TECHNOLOGIES S.A. que asiste el proceso manual de conciliación bancaria entre el CRM (libro mayor GBP) y los extractos bancarios.
+Sistema interno de ARMY TECHNOLOGIES S.A. que concilia el libro mayor del CRM (GBP)
+contra los extractos bancarios de **BBVA**, **Santander** y **Galicia**.
 
-## ¿Qué hace?
+Empareja automáticamente lo que corresponde, sugiere los ajustes que puede probar con
+los archivos, y deja a la vista solo lo que necesita una decisión contable.
 
-Automatiza tareas repetitivas de la conciliación:
+## Cómo se usa
 
-- **Lee automáticamente** los archivos del CRM y del banco (BBVA / Santander).
-- **Detecta saldos** iniciales y finales, formato de archivo, y tipo de movimientos.
-- **Matchea automáticamente** movimientos entre CRM y banco por diferentes criterios (referencia exacta, monto con tolerancia, agrupaciones de cupones, operaciones COMEX, etc.).
-- **Sugiere ajustes** automáticos detectados con alta confianza (Liq Master pendiente, Débitos pendientes, Dif gs bancarios).
-- **Genera un reporte Excel** con el detalle completo.
+1. **Archivos.** Elegir el banco y subir el libro mayor exportado de GBP y el extracto
+   del banco, los dos del mismo mes. No hace falta cargar ningún saldo.
+2. **Ajustes.** Aceptar o ignorar las sugerencias del sistema y cargar los ajustes que
+   requieren criterio contable. La diferencia se recalcula al instante.
+3. **Resultado.** Revisar el cálculo final y los movimientos sin justificar, y
+   descargar el Excel.
 
-El usuario carga ajustes manuales adicionales según su criterio (Payway, correcciones específicas, etc.) y el sistema calcula el residuo final.
+La conciliación cierra cuando la diferencia final queda entre $0 y **$1.500**.
 
-## Arquitectura
+## Cómo calcula
 
 ```
-├── app.py                     # Interfaz web con Streamlit
-├── orquestador.py             # Punto de entrada: coordina la conciliación
-├── conciliacion.py            # Sistema original (aún usado para clasificar_huerfanos)
-├── bancos/                    # Perfiles específicos por banco
-│   ├── __init__.py            # Registro de bancos disponibles
-│   ├── base.py                # Clase abstracta Banco (interfaz)
-│   ├── bbva.py                # Perfil BBVA (cupones VISA/MASTER, Dif gs bancarios)
-│   └── santander.py           # Perfil Santander (COMEX, CO.CERT.VA, préstamos)
-└── nucleo/                    # Lógica común a todos los bancos
-    ├── utilidades.py          # Helpers (parseo, normalización)
-    ├── carga_crm.py           # Lectura del libro mayor GBP
-    ├── matching_base.py       # Pasadas de matching genérico
-    └── ajustes_comunes.py     # Detección de posibles débitos pendientes
+saldo bancario calculado = saldo del libro mayor + saldo de apertura + ajustes
+diferencia final         = saldo bancario calculado − saldo del extracto
 ```
 
-## Requisitos
+**El saldo de apertura no se carga: se calcula.** Es el desfase que viene del mes
+anterior:
 
-- Python 3.9 o superior
-- Ver `requirements.txt` para las dependencias.
+```
+apertura = saldo del extracto al cierre del mes anterior − saldo con que abre el libro
+```
 
-## Instalación
+El cierre del mes anterior se obtiene del propio extracto del mes que se concilia:
+Santander y Galicia informan el saldo con que abre el período, y BBVA trae el saldo de
+cierre y todos los movimientos, así que se deduce restándolos. Está verificado que la
+apertura de cada mes coincide al centavo con el cierre del extracto anterior.
+
+> No volver a usar los "saldos de apertura históricos" fijos que figuraban en versiones
+> anteriores ($4.374.372,97 en BBVA y $13.983.219,82 en Santander). Contabilidad
+> incorporó esas partidas al libro mayor en mayo de 2026: sumarlas otra vez las cuenta
+> dos veces.
+
+**Cada movimiento sin pareja individual se clasifica según cómo queda cubierto:**
+
+- **Compensado**: cargos del banco (impuestos, comisiones) que el libro registra en un
+  solo asiento agrupado ("- Proveedores"). Se compensan contra ese asiento aunque sobre
+  una partida o quede un residuo chico, que se muestra como una sola línea.
+- **En un ajuste**: está explicado por un ajuste cargado.
+- **Sin justificar**: lo único que hay que revisar.
+
+Antes de calcular, el sistema verifica que el libro mayor y el extracto sean del mismo
+mes; si no, frena con un mensaje.
+
+## Bancos
+
+| Banco | Particularidades del perfil |
+|---|---|
+| BBVA | Cupones Prisma contra liquidaciones de tarjeta, sueldos agrupados por día, diferencia de gastos bancarios, débitos pendientes |
+| Santander | Operaciones COMEX, certificaciones agrupadas, cuotas de préstamo, cupones VISA/MASTER, agrupaciones por día, cheques en clearing |
+| Galicia | Gastos bancarios agrupados (usa la columna "Grupo de Conceptos" del extracto), débitos pendientes |
+
+Para sumar un banco, crear su perfil en `bancos/` (heredando de `bancos/base.py`) y
+registrarlo en `bancos/__init__.py`. Galicia se construyó a partir de dos meses de
+archivos.
+
+## Estructura
+
+```
+├── app/, components/, lib/   Interfaz (Next.js)
+├── api/
+│   ├── index.py              API (FastAPI): /api/bancos, /api/conciliar, /api/health
+│   ├── _serializacion.py     Conversión del resultado a JSON
+│   └── ping.py               Diagnóstico del despliegue, sin dependencias
+├── orquestador.py            Coordina una conciliación de punta a punta
+├── bancos/                   Un perfil por banco: lectura del extracto, matching y ajustes propios
+├── nucleo/
+│   ├── carga_crm.py          Lectura del libro mayor de GBP
+│   ├── matching_base.py      Emparejamiento común a todos los bancos
+│   ├── cobertura.py          Clasificación de los movimientos sin pareja
+│   ├── reporte.py            Excel de la conciliación
+│   └── ...
+├── conciliacion.py           Sistema original; hoy solo se usa clasificar_huerfanos
+└── tests/
+```
+
+## Desarrollo local
+
+Requisitos: Python 3.9 o superior y Node.js.
 
 ```bash
-# Clonar el repo
-git clone <URL_DEL_REPO>
-cd conciliacion-bancaria
-
-# Instalar dependencias
-pip install -r requirements.txt
+pip3 install -r requirements-dev.txt
+npm install
 ```
 
-## Uso
+Levantar la API y la interfaz, cada una en su terminal:
 
 ```bash
-python3 -m streamlit run app.py
+python3 -m uvicorn api.index:app --port 8899
 ```
 
-Se abre en el navegador en `http://localhost:8501`.
+```bash
+npm run dev
+```
 
-## Flujo de trabajo
+La interfaz queda en `http://localhost:3000` y, en desarrollo, redirige `/api` a la API
+local (ver `next.config.ts`).
 
-1. **Pantalla 1**: elegir banco (BBVA/Santander), subir CRM y extracto bancario, cargar saldos de apertura.
-2. **Pantalla 2 (carrito)**: revisar sugerencias automáticas, marcar posibles débitos pendientes, cargar ajustes manuales.
-3. **Pantalla 3 (resultado)**: descargar el Excel con la conciliación completa.
+## Tests
 
-## Datos de referencia
+```bash
+python3 -m pytest
+```
 
-**BBVA**:
-- Saldo apertura histórico: `$4.374.372,97`
-- Residuo estructural esperado: `~$941`
-- Ajustes típicos: Payway, Débitos pendientes, Liq Master, Dif gs bancarios
+Correrlos **antes de subir cualquier cambio**. Tardan unos 30 segundos.
 
-**Santander**:
-- Saldo apertura histórico: `$13.983.219,82`
-- Residuo estructural esperado: `~$131,87`
-- Patrones específicos: COMEX (Op X + Proveedores = COB.IMPORT), CO.CERT.VA agrupadas, cuotas de préstamo
+- Los que usan los **archivos bancarios reales** (regresión de cada mes, encadenamiento
+  de saldos, errores de carga) los leen de `~/Desktop/bancos/BANCO/MES/`, o de la
+  carpeta indicada en la variable `CONCILIACION_DATOS`. Los archivos **nunca** se suben
+  al repositorio; si faltan, esos tests se saltean.
+- Los demás usan datos inventados mínimos y corren en cualquier máquina:
+  `python3 -m pytest -m "not datos"`.
 
-## Consultas pendientes
+**Al cerrar un mes nuevo**: guardar sus archivos en `~/Desktop/bancos/BANCO/MES/`,
+agregarlos a `tests/ayudas.py` y sumar sus valores a `tests/test_regresion.py`, pero
+solo una vez que el cierre esté validado con contabilidad. Los tests protegen lo que ya
+se sabe que está bien; no deciden qué está bien.
 
-Cosas a definir con contabilidad:
+Si un test de regresión falla después de un cambio, el cambio alteró el resultado de
+una conciliación. Puede ser intencional, pero entonces hay que revisar el caso a mano y
+actualizar el valor esperado a conciencia, nunca para que el test pase.
 
-- Santander: cómo distinguir automáticamente los 3 tipos de "- Proveedores" (COMEX / préstamo / gastos bancarios) sin la contracuenta.
-- Santander: corrección del asiento del 31/05 (tiene error de $241.620,66).
-- BBVA: criterio Dif gs bancarios mayo (arrastre o no).
+## Despliegue
 
-## Contacto
+Vercel, desde la rama `main`. La interfaz se sirve como Next.js y `/api` como una
+función Python.
 
-Proyecto interno ARMY TECHNOLOGIES S.A.
+- Las dependencias de la función salen de `requirements.txt`, en la raíz.
+- `/api/health` confirma que la API cargó (`{"ok": true, "bancos": 3}`); si falla,
+  devuelve el motivo.
+- `/api/ping` informa qué archivos y dependencias llegaron al servidor, sin importar
+  nada del proyecto. Sirve cuando la API ni siquiera arranca.
+
+Los archivos subidos se procesan en memoria y no se guardan.
+
+## Pendientes con contabilidad
+
+- **Santander**: la comisión de originación del préstamo ($400.500 del 10/06/2026) no
+  está incluida en el asiento agrupado de gastos. ¿Se contabiliza aparte?
+- **BBVA**: de la transferencia a Diego del 05/06/2026 ($1.950.000) solo está
+  contabilizado el movimiento de $1.500.000; falta el de $450.000.
