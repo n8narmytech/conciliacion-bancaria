@@ -250,24 +250,105 @@ def _marcar_cubiertos_por_ajustes(discrepancias, ajustes_manuales):
             sin_lista.append(a)
 
     disponibles = [
-        (a.get("concepto", "ajuste"), abs(float(a.get("monto", 0))))
+        (a.get("concepto", "ajuste"), float(a.get("monto", 0)))
         for a in sin_lista
         if abs(float(a.get("monto", 0))) > 0.01
     ]
     usados = set()
 
     for d in discrepancias:
-        if d["cobertura"] != "ninguna":
+        # La línea de diferencia de gastos se resuelve aparte, después: si un
+        # ajuste coincide con un cargo concreto del grupo, se prefiere
+        # marcar ese cargo antes que la línea.
+        if d["cobertura"] != "ninguna" or d.get("origen") == "GRUPO":
             continue
         monto = abs(float(d.get("monto", 0)))
         for i, (concepto, valor) in enumerate(disponibles):
             if i in usados:
                 continue
-            if abs(valor - monto) < 0.01:
+            if abs(abs(valor) - monto) < 0.01:
                 d["cobertura"] = "ajuste"
                 d["cobertura_detalle"] = f"Declarado en el ajuste «{concepto}»."
                 usados.add(i)
                 break
+
+    restantes = [a for i, a in enumerate(disponibles) if i not in usados]
+    _aplicar_ajustes_a_la_diferencia_de_gastos(discrepancias, restantes)
+
+
+def _aplicar_ajustes_a_la_diferencia_de_gastos(discrepancias, ajustes):
+    """
+    Descuenta de la diferencia de gastos los ajustes que explican parte de
+    ella.
+
+    Cuando los cargos del banco y el asiento "- Proveedores" no coinciden,
+    los cargos quedan compensados y la diferencia se muestra en una sola
+    línea. Si después se carga un ajuste por uno de esos cargos (por
+    ejemplo, una comisión que no entró en el asiento), el ajuste no tenía
+    con qué cruzarse: el cargo estaba dentro del grupo y la línea mostraba
+    el total, que no coincide con el ajuste.
+
+    Ahora, para cada ajuste sin pareja:
+      - si coincide con un cargo del grupo, ese cargo sale del grupo, queda
+        cubierto por el ajuste y la diferencia se recalcula sin él;
+      - lo que quede de la diferencia se da por explicado si coincide con
+        uno de los ajustes restantes o con la suma de algunos de ellos (por
+        ejemplo, dos cargos de fecha cruzada cargados por separado).
+    """
+    linea = next((d for d in discrepancias if d.get("origen") == "GRUPO"), None)
+    if linea is None or linea["cobertura"] != "ninguna" or not ajustes:
+        return
+
+    sin_usar = []
+    for concepto, monto in ajustes:
+        cargo = next(
+            (d for d in discrepancias
+             if d.get("origen") == "BANCO" and d["cobertura"] == "agrupada"
+             and abs(abs(d["monto"]) - abs(monto)) < 0.01),
+            None,
+        )
+        if cargo is None:
+            sin_usar.append((concepto, monto))
+            continue
+        cargo["cobertura"] = "ajuste"
+        cargo["cobertura_detalle"] = (
+            f"Declarado en el ajuste «{concepto}». Se lo saca de la "
+            f"comparación contra el asiento '- Proveedores'."
+        )
+        linea["monto"] = round(linea["monto"] - cargo["monto"], 2)
+
+    if abs(linea["monto"]) < 0.01:
+        discrepancias.remove(linea)
+        return
+
+    explican = _ajustes_que_suman(sin_usar, linea["monto"])
+    if explican:
+        linea["cobertura"] = "ajuste"
+        linea["cobertura_detalle"] = "Explicada por " + (
+            "el ajuste " if len(explican) == 1 else "los ajustes ") + ", ".join(
+            f"«{c}»" for c, _ in explican) + "."
+        return
+
+    linea["cobertura_detalle"] = (
+        f"Diferencia que queda entre los cargos del banco y el asiento "
+        f"'- Proveedores' después de los ajustes cargados: ${linea['monto']:,.2f}."
+    )
+
+
+def _ajustes_que_suman(ajustes, objetivo, maximo=12):
+    """
+    La combinación más chica de ajustes [(concepto, monto), ...] cuya suma
+    es `objetivo` al centavo, o una lista vacía. Son pocos ajustes por
+    conciliación, así que se prueban todas las combinaciones.
+    """
+    from itertools import combinations
+
+    ajustes = ajustes[:maximo]
+    for k in range(1, len(ajustes) + 1):
+        for combo in combinations(ajustes, k):
+            if abs(sum(m for _, m in combo) - objetivo) < 0.01:
+                return list(combo)
+    return []
 
 
 def _clave_fila(fila):

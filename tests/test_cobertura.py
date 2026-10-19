@@ -119,3 +119,63 @@ def test_ajuste_sin_coincidencia_no_cubre_nada():
     mov = movimiento("BANCO", -450_000, 30)
     resumen = clasificar_cobertura([mov], [{"concepto": "Otra cosa", "monto": -123}])
     assert resumen["sin_justificar"] == 1
+
+
+# --- Ajustes por cargos que están dentro de la diferencia de gastos ----
+
+def _grupo_con_diferencia():
+    """Santander julio en miniatura, a la misma escala: el asiento no
+    incluye la comisión COM BCRA ni el cargo del 03/08, e incluye un cargo
+    del 01/07 que vino en el extracto anterior. Diferencia: -36.130,27."""
+    comision = cargo(-36_976.14, 3, "COMISION COM BCRA A 4605")
+    agosto = cargo(-199.58, 4, "RRSIRCREB")
+    disc = [cargo(-2_000_000, 1), cargo(-2_008_735.49, 2), comision, agosto,
+            asiento_proveedores(-4_009_780.94, 50)]
+    return disc, comision
+
+
+def _linea_gastos(disc):
+    return next((d for d in disc if d["origen"] == "GRUPO"), None)
+
+
+def test_sin_ajustes_la_diferencia_de_gastos_es_la_de_julio():
+    disc, _ = _grupo_con_diferencia()
+    clasificar_cobertura(disc)
+    assert _linea_gastos(disc)["monto"] == pytest.approx(-36_130.27, abs=0.01)
+
+
+def test_un_ajuste_por_un_cargo_del_grupo_lo_saca_de_la_diferencia():
+    disc, comision = _grupo_con_diferencia()
+    clasificar_cobertura(disc, [{"concepto": "COM BCRA", "monto": -36_976.14}])
+    assert comision["cobertura"] == "ajuste"
+    assert _linea_gastos(disc)["monto"] == pytest.approx(845.87, abs=0.01)
+
+
+def test_la_diferencia_restante_se_cubre_con_otro_ajuste_aunque_haya_ajustes_ajenos():
+    disc, _ = _grupo_con_diferencia()
+    clasificar_cobertura(disc, [
+        {"concepto": "Haberes", "monto": -8_477_900.00},          # no tiene que ver
+        {"concepto": "COM BCRA", "monto": -36_976.14},
+        {"concepto": "Cargo del 03/08", "monto": -199.58},
+        {"concepto": "Cargo del 01/07", "monto": 1_045.45},
+    ])
+    linea = _linea_gastos(disc)
+    assert linea["monto"] == pytest.approx(1_045.45, abs=0.01)
+    assert linea["cobertura"] == "ajuste"
+    assert "Cargo del 01/07" in linea["cobertura_detalle"]
+
+
+def test_si_los_ajustes_explican_toda_la_diferencia_la_linea_desaparece():
+    comision = cargo(-36_976.14, 3)
+    disc = [cargo(-2_000_000, 1), cargo(-2_000_000, 2), comision, asiento_proveedores(-4_000_000, 50)]
+    clasificar_cobertura(disc, [{"concepto": "COM BCRA", "monto": -36_976.14}])
+    assert comision["cobertura"] == "ajuste"
+    assert _linea_gastos(disc) is None
+
+
+def test_un_ajuste_por_la_diferencia_entera_sigue_funcionando():
+    disc, _ = _grupo_con_diferencia()
+    clasificar_cobertura(disc, [{"concepto": "Diferencia de gastos", "monto": -36_130.27}])
+    linea = _linea_gastos(disc)
+    assert linea["cobertura"] == "ajuste"
+    assert "Diferencia de gastos" in linea["cobertura_detalle"]
