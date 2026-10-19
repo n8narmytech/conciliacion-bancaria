@@ -8,8 +8,8 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Ajuste, Discrepancia, Estadisticas } from "@/lib/tipos";
+import { Fragment, useMemo, useState } from "react";
+import type { Ajuste, ComponenteGrupo, Discrepancia, Estadisticas } from "@/lib/tipos";
 import { cierraOk, fechaCorta, pesos, pesosConSigno } from "@/lib/formato";
 import { Aviso, Boton, Chip, Panel } from "./ui";
 
@@ -135,6 +135,7 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
   const [orden, setOrden] = useState<OrdenDiscrepancia>("monto");
   const [filtroOrigen, setFiltroOrigen] = useState<"todos" | "CRM" | "BANCO">("todos");
   const [soloGrandes, setSoloGrandes] = useState(false);
+  const [grupoAbierto, setGrupoAbierto] = useState(true);
   const sinJustificar = useMemo(
     () => discrepancias.filter((d) => d.cobertura === "ninguna"),
     [discrepancias],
@@ -237,7 +238,8 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
             </thead>
             <tbody>
               {visibles.map((d, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid var(--borde)" }}>
+                <Fragment key={i}>
+                <tr style={{ borderBottom: "1px solid var(--borde)" }}>
                   <td style={{ padding: "0.42rem 0.5rem" }} title={d.cobertura_detalle}>
                     {d.cobertura === "ninguna" ? (
                       <Chip tono="alerta">sin justificar</Chip>
@@ -283,11 +285,33 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
                     {d.contraparte && (
                       <span style={{ color: "var(--tinta-suave)" }}> · {d.contraparte}</span>
                     )}
+                    {d.componentes && d.componentes.length > 0 && (
+                      <button
+                        onClick={() => setGrupoAbierto(!grupoAbierto)}
+                        style={{
+                          display: "block",
+                          marginTop: "0.35rem",
+                          padding: 0,
+                          border: "none",
+                          background: "none",
+                          color: "var(--acento)",
+                          fontSize: "0.78rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {grupoAbierto ? "Ocultar ▴" : `Qué la compone (${d.componentes.length}) ▾`}
+                      </button>
+                    )}
                   </td>
                   <td style={{ padding: "0.42rem 0.5rem", color: "var(--tinta-suave)", fontSize: "0.78rem" }}>
                     {d.tipo}
                   </td>
                 </tr>
+                {d.componentes && d.componentes.length > 0 && grupoAbierto && (
+                  <ComponentesGrupo componentes={d.componentes} />
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -407,5 +431,41 @@ function FilaCalculo({
         {pesos(monto)}
       </td>
     </tr>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Los movimientos que forman la diferencia de gastos, debajo de su línea.
+ * Usa las mismas columnas que la tabla, para leerse como parte del grupo.
+ */
+function ComponentesGrupo({ componentes }: { componentes: ComponenteGrupo[] }) {
+  const celda = { padding: "0.38rem 0.5rem", background: "var(--superficie-alt)", borderBottom: "1px solid var(--borde)" } as const;
+  const importe = { ...celda, textAlign: "right" as const, fontFamily: "var(--font-mono)", whiteSpace: "nowrap" as const };
+  return (
+    <>
+      {componentes.map((c, j) => {
+        const ajustado = c.ajuste_posible === null;
+        return (
+          <tr key={j} title={c.nota} style={{ opacity: ajustado ? 0.55 : 1 }}>
+            <td colSpan={2} style={{ ...celda, paddingLeft: "1rem", whiteSpace: "nowrap" }}>
+              <span style={{ color: "var(--tinta-suave)", marginRight: "0.4rem" }}>↳</span>
+              <span style={{ fontSize: "0.76rem", fontWeight: 600, color: ajustado ? "var(--tinta-suave)" : "var(--alerta)" }}>
+                {c.marca}
+              </span>
+            </td>
+            <td className="cifra" style={{ ...celda, whiteSpace: "nowrap" }}>{fechaCorta(c.fecha)}</td>
+            <td className="cifra" style={{ ...importe, color: c.monto < 0 ? "var(--error)" : "var(--tinta)" }}>
+              {pesosConSigno(c.monto)}
+            </td>
+            <td className="cifra" style={{ ...importe, fontWeight: 600, color: "var(--acento)" }}>
+              {ajustado ? "—" : pesosConSigno(c.ajuste_posible as number)}
+            </td>
+            <td colSpan={2} style={{ ...celda, color: "var(--tinta-media)" }}>{c.descripcion}</td>
+          </tr>
+        );
+      })}
+    </>
   );
 }

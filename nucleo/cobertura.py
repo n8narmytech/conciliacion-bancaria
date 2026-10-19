@@ -17,6 +17,8 @@ Este módulo separa esos casos de lo que realmente quedó sin explicación,
 que es lo único que hay que investigar cuando la conciliación no cierra.
 """
 
+from collections import Counter
+
 # Tolerancia para dar por compensado un grupo contra su asiento agrupado.
 TOLERANCIA_GRUPO = 1.0
 
@@ -54,6 +56,8 @@ def clasificar_cobertura(discrepancias, ajustes_manuales=None, banco_obj=None):
     for d in discrepancias:
         d["ajuste_posible"] = ajuste_que_lo_explica(d)
 
+    _componer_diferencia_de_gastos(discrepancias)
+
     agrupados = [d for d in discrepancias if d["cobertura"] == "agrupada"]
     ajustados = [d for d in discrepancias if d["cobertura"] == "ajuste"]
     sin_cubrir = [d for d in discrepancias if d["cobertura"] == "ninguna"]
@@ -66,6 +70,148 @@ def clasificar_cobertura(discrepancias, ajustes_manuales=None, banco_obj=None):
         "sin_justificar": len(sin_cubrir),
         "sin_justificar_monto": round(sum(d["monto"] for d in sin_cubrir), 2),
     }
+
+
+# Qué tan grande puede ser lo que el asiento tiene "de más": son los cargos
+# del extracto anterior con fecha de este mes (los del día 1), que siempre
+# fueron pocos y chicos. Por encima de esto, la parte negativa no se
+# atribuye a un cargo.
+SOBRANTE_MAXIMO = 5000.0
+
+# Si hay más candidatos que estos, no se listan: no servirían de pista.
+CANDIDATOS_MAXIMOS = 3
+
+
+def _componer_diferencia_de_gastos(discrepancias):
+    """
+    Agrega a la línea de diferencia de gastos los movimientos que la
+    forman, para mostrarlos en un desplegable sin desarmar el grupo.
+
+    La diferencia (cargos del banco menos el asiento "- Proveedores") se
+    forma con tres cosas, cada una con una huella distinta:
+
+      1. Cargos con fecha de otro mes: el banco los imputó al día hábil
+         siguiente y van en el asiento del mes en que caen. Se reconocen
+         por la fecha. Seguro.
+      2. Cargos que el asiento no incluyó: hacen la diferencia negativa.
+         Se busca el cargo que la explica dejando a lo sumo un sobrante
+         positivo y chico. Si hay varios, se prefiere el de un concepto que
+         aparece una sola vez en el mes (lo que se escapa del asiento suele
+         ser lo poco habitual, no un impuesto que se repite todos los días).
+         Es una inferencia: se marca como "probable".
+      3. Lo que el asiento tiene de más: normalmente cargos del extracto
+         anterior con fecha de este mes. No están en ningún archivo del
+         mes, así que se informa el monto con un texto para buscarlo.
+
+    Los componentes suman exactamente la línea. Los cargos que el usuario ya
+    sacó con un ajuste se listan aparte, marcados.
+    """
+    linea = next((d for d in discrepancias if d.get("origen") == "GRUPO"), None)
+    if linea is None:
+        return
+
+    miembros = [d for d in discrepancias if d.get("en_diferencia_de_gastos") and d.get("origen") == "BANCO"]
+    en_grupo = [d for d in miembros if d.get("cobertura") == "agrupada"]
+    ajustados = [d for d in miembros if d.get("cobertura") == "ajuste"]
+    periodo = _mes_mayoritario(en_grupo)
+
+    componentes = []
+
+    def componente(d, marca, nota):
+        componentes.append({
+            "fecha": d.get("fecha"),
+            "monto": round(float(d["monto"]), 2),
+            "descripcion": d.get("descripcion", ""),
+            "marca": marca,
+            "nota": nota,
+            "ajuste_posible": round(float(d["monto"]), 2),
+        })
+
+    # 1. Fecha de otro mes
+    fuera = [d for d in en_grupo if periodo and _mes_de(d) != periodo]
+    for d in fuera:
+        componente(d, "Fecha de otro mes",
+                   f"Cargo con fecha {d['fecha']:%d/%m/%Y}: va en el asiento de gastos del mes en que cae.")
+    resto = round(linea["monto"] - sum(d["monto"] for d in fuera), 2)
+
+    # 2. Cargos que el asiento no incluyó
+    del_mes = [d for d in en_grupo if d not in fuera]
+    if resto < -0.01:
+        exactos = [d for d in del_mes if abs(d["monto"] - resto) < 0.01]
+        if exactos:
+            candidatos = exactos[:1]
+        else:
+            candidatos = [d for d in del_mes if 0 <= resto - d["monto"] <= SOBRANTE_MAXIMO]
+            if len(candidatos) > 1:
+                veces = Counter(_concepto(d) for d in en_grupo)
+                unicos = [d for d in candidatos if veces[_concepto(d)] == 1]
+                if unicos:
+                    candidatos = unicos
+        if len(candidatos) == 1:
+            d = candidatos[0]
+            componente(d, "No está en el asiento (probable)",
+                       "El banco lo cobró y es el cargo que explica la diferencia: "
+                       "verificá si está en la lista con que se armó el asiento.")
+            resto = round(resto - d["monto"], 2)
+        elif 1 < len(candidatos) <= CANDIDATOS_MAXIMOS:
+            for d in candidatos:
+                componente(d, "Uno de estos podría faltar",
+                           "Más de un cargo podría explicar la diferencia: "
+                           "verificá cuál falta en la lista del asiento.")
+
+    # 3. Lo que el asiento tiene de más (o lo que no se pudo atribuir)
+    if not any(c["marca"].startswith("Uno de estos") for c in componentes) and abs(resto) > 0.01:
+        componentes.append({
+            "fecha": linea.get("fecha"),
+            "monto": resto,
+            "descripcion": (
+                f"El asiento tiene {_pesos(abs(resto))} más que los cargos del banco"
+                if resto > 0 else
+                f"Faltan {_pesos(abs(resto))} en el asiento que no se pudieron atribuir a un cargo"
+            ),
+            "marca": "Del mes anterior" if 0 < resto <= SOBRANTE_MAXIMO else "Sin identificar",
+            "nota": (
+                "Probablemente un cargo del extracto anterior con fecha de este mes "
+                "(por ejemplo, del día 1) que se sumó a este asiento."
+                if 0 < resto <= SOBRANTE_MAXIMO else
+                "Compará la lista del asiento con los cargos del extracto."
+            ),
+            "ajuste_posible": resto,
+        })
+
+    for d in ajustados:
+        componentes.append({
+            "fecha": d.get("fecha"),
+            "monto": round(float(d["monto"]), 2),
+            "descripcion": d.get("descripcion", ""),
+            "marca": "Ya ajustado",
+            "nota": d.get("cobertura_detalle", ""),
+            "ajuste_posible": None,
+        })
+
+    linea["componentes"] = componentes
+
+
+def _concepto(d):
+    """El tipo de cargo, para saber si se repite en el mes: la primera
+    palabra de la descripción (IMPUESTO, RRSIRCREB, TRANS.INTE...)."""
+    partes = str(d.get("descripcion", "")).split()
+    return partes[0] if partes else ""
+
+
+def _mes_de(d):
+    f = d.get("fecha")
+    return (f.year, f.month) if f is not None and hasattr(f, "month") else None
+
+
+def _mes_mayoritario(movimientos):
+    meses = Counter(_mes_de(d) for d in movimientos if _mes_de(d) is not None)
+    return meses.most_common(1)[0][0] if meses else None
+
+
+def _pesos(valor):
+    """Monto en formato argentino: $1.045,45."""
+    return "$" + f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def ajuste_que_lo_explica(discrepancia):
@@ -167,6 +313,8 @@ def _marcar_grupo_gastos(discrepancias, banco_obj):
     for d in compensados + usados:
         d["cobertura"] = "agrupada"
         d["cobertura_detalle"] = detalle
+        if abs(residuo) > 0.01:
+            d["en_diferencia_de_gastos"] = True
 
     if apartado is not None:
         apartado["cobertura_detalle"] = (

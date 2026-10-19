@@ -189,3 +189,60 @@ def test_ajuste_posible_tiene_el_signo_resuelto():
     assert del_libro["ajuste_posible"] == 400_500.00       # libro: signo contrario
     assert del_banco["ajuste_posible"] == -27_732.11       # banco: mismo signo
     assert cobro_del_libro["ajuste_posible"] == -72_913.43
+
+
+# --- Qué compone la diferencia de gastos (desplegable) ----------------
+
+def _julio_en_miniatura():
+    """Como Santander julio: el asiento no incluye la comisión COM BCRA ni el
+    impuesto del 03/08, e incluye 1.045,45 de un cargo del mes anterior.
+    Diferencia: -36.130,27."""
+    julio = date(2026, 7, 10)
+    cargos = [cargo(-2_000_000, 1, "IMPUESTO AL DEBITO"), cargo(-2_008_735.49, 2, "IMPUESTO AL DEBITO"),
+              cargo(-39_432.76, 3, "RRSIRCREB REGIMEN"), cargo(-36_976.14, 4, "TRANS.INTE COMISION COM BCRA"),
+              cargo(-199.58, 5, "RRSIRCREB REGIMEN")]
+    for c in cargos:
+        c["fecha"] = julio
+    cargos[-1]["fecha"] = date(2026, 8, 3)
+    asiento = asiento_proveedores(-4_009_780.94 - 39_432.76, 50)
+    asiento["fecha"] = date(2026, 7, 31)
+    return cargos + [asiento]
+
+
+def _componentes(disc):
+    return next(d for d in disc if d["origen"] == "GRUPO")["componentes"]
+
+
+def test_la_diferencia_se_compone_de_los_tres_movimientos():
+    disc = _julio_en_miniatura()
+    clasificar_cobertura(disc)
+    linea = next(d for d in disc if d["origen"] == "GRUPO")
+    assert linea["monto"] == pytest.approx(-36_130.27, abs=0.01)
+    comp = {c["marca"]: c["monto"] for c in _componentes(disc)}
+    assert comp == {
+        "Fecha de otro mes": -199.58,
+        "No está en el asiento (probable)": -36_976.14,  # no el RRSIRCREB, que se repite
+        "Del mes anterior": 1_045.45,
+    }
+    assert sum(comp.values()) == pytest.approx(linea["monto"], abs=0.01)
+
+
+def test_si_no_hay_como_desempatar_muestra_los_candidatos_sin_elegir():
+    disc = _julio_en_miniatura()
+    for d in disc:
+        if "COM BCRA" in d["descripcion"]:
+            d["descripcion"] = "RRSIRCREB REGIMEN"   # ahora los dos candidatos son del mismo tipo
+    clasificar_cobertura(disc)
+    marcas = [c["marca"] for c in _componentes(disc)]
+    assert marcas.count("Uno de estos podría faltar") == 2
+    assert "No está en el asiento (probable)" not in marcas
+
+
+def test_con_un_ajuste_cargado_el_componente_queda_como_ya_ajustado():
+    disc = _julio_en_miniatura()
+    clasificar_cobertura(disc, [{"concepto": "COM BCRA", "monto": -36_976.14}])
+    comp = {c["marca"]: c for c in _componentes(disc)}
+    assert comp["Ya ajustado"]["monto"] == -36_976.14
+    assert comp["Ya ajustado"]["ajuste_posible"] is None
+    pendientes = sum(c["monto"] for c in _componentes(disc) if c["marca"] != "Ya ajustado")
+    assert pendientes == pytest.approx(845.87, abs=0.01)

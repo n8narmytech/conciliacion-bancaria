@@ -14,7 +14,7 @@ export interface Banco {
 /** Ajuste que el sistema detecta solo a partir de los archivos. */
 /** Movimiento identificado por su origen y su fila en el archivo. */
 export interface ReferenciaMovimiento {
-  origen: "CRM" | "BANCO";
+  origen: "CRM" | "BANCO" | "GRUPO";
   fila: number;
 }
 
@@ -38,6 +38,18 @@ export interface Ajuste {
   movimientos?: ReferenciaMovimiento[];
 }
 
+/** Un movimiento que forma parte de la diferencia de gastos. */
+export interface ComponenteGrupo {
+  fecha: string | null;
+  monto: number;
+  descripcion: string;
+  /** "Fecha de otro mes", "Probablemente no está en el asiento", "Del mes anterior", "Ya ajustado"... */
+  marca: string;
+  nota: string;
+  /** null cuando ya está ajustado. */
+  ajuste_posible: number | null;
+}
+
 export interface Discrepancia {
   tipo: string;
   /** GRUPO: residuo entre los cargos del banco y el asiento que los agrupa. */
@@ -52,6 +64,8 @@ export interface Discrepancia {
   cobertura_detalle: string;
   /** Ajuste que habría que cargar para explicar este movimiento, con su signo. */
   ajuste_posible: number;
+  /** Solo en la línea de diferencia de gastos: los movimientos que la forman. */
+  componentes?: ComponenteGrupo[];
   cruza_meses?: boolean;
   nota?: string;
 }

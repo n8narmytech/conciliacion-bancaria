@@ -109,3 +109,13 @@ def test_cargar_los_ajustes_posibles_cierra_la_conciliacion():
     st = conciliar_mes("bbva", "junio", ajustes_manuales=ajustes)["estadisticas"]
     assert st["diferencia_final"] == pytest.approx(0.00, abs=0.01)
     assert st["sin_justificar"] == 0
+
+
+def test_los_componentes_de_la_diferencia_de_gastos_cuadran_en_todos_los_meses():
+    from tests.ayudas import ARCHIVOS
+    for banco, mes in ARCHIVOS:
+        linea = next((d for d in conciliar_mes(banco, mes)["discrepancias"] if d["origen"] == "GRUPO"), None)
+        if linea is None:
+            continue
+        suma = sum(c["monto"] for c in linea["componentes"] if c["marca"] != "Ya ajustado")
+        assert suma == pytest.approx(linea["monto"], abs=0.01), f"{banco} {mes}"

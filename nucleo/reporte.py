@@ -228,6 +228,25 @@ def _hoja_pendientes(ws, discrepancias):
         nota.alignment = Alignment(wrap_text=True, vertical="center")
         f += 1
 
+        # Debajo de la diferencia de gastos, los movimientos que la forman
+        for comp in d.get("componentes") or []:
+            ws.cell(f, 1, f"   ↳ {comp['marca']}").font = Font(name="Calibri", size=9, color=AMBAR)
+            c = ws.cell(f, 3, comp["fecha"])
+            c.number_format = "DD/MM/YYYY"
+            c.font = F_NORMAL
+            c = ws.cell(f, 4, comp["monto"])
+            c.number_format = PESOS
+            c.font = F_NORMAL
+            if comp.get("ajuste_posible") is not None:
+                c = ws.cell(f, 5, comp["ajuste_posible"])
+                c.number_format = PESOS
+                c.font = Font(name="Calibri", size=10, bold=True, color=ACENTO)
+            ws.cell(f, 6, comp["descripcion"]).font = F_NORMAL
+            n = ws.cell(f, 9, comp["nota"])
+            n.font = Font(name="Calibri", size=9, color="6B7885")
+            n.alignment = Alignment(wrap_text=True, vertical="center")
+            f += 1
+
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:I{max(f - 1, 1)}"
 
