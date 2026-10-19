@@ -181,9 +181,9 @@ def _hoja_conciliacion(ws, stats, nombre_banco, periodo):
 # ---------------------------------------------------------------------
 def _hoja_pendientes(ws, discrepancias):
     ws.sheet_view.showGridLines = False
-    encabezados = ["Estado", "Origen", "Fecha", "Monto", "Descripción",
+    encabezados = ["Estado", "Origen", "Fecha", "Monto", "Ajuste posible", "Descripción",
                    "Contraparte", "Clasificación", "Por qué queda así"]
-    anchos = [24, 10, 12, 18, 44, 28, 30, 54]
+    anchos = [24, 10, 12, 18, 18, 44, 28, 30, 54]
     _escribir_encabezados(ws, encabezados, anchos)
 
     # Lo que falta explicar va primero: es lo que hay que mirar.
@@ -211,19 +211,25 @@ def _hoja_pendientes(ws, discrepancias):
         cm = ws.cell(f, 4, d.get("monto", 0))
         cm.number_format = PESOS
         cm.font = F_NORMAL
-        ws.cell(f, 5, d.get("descripcion", "")).font = F_NORMAL
-        ws.cell(f, 6, d.get("contraparte", "")).font = F_NORMAL
-        ws.cell(f, 7, d.get("tipo", "")).font = F_NORMAL
+        # El ajuste que explicaría el movimiento, con el signo ya resuelto.
+        # Solo para lo que falta justificar: en lo demás no hace falta cargar nada.
+        if cobertura == "ninguna":
+            ca = ws.cell(f, 5, d.get("ajuste_posible", 0))
+            ca.number_format = PESOS
+            ca.font = Font(name="Calibri", size=10, bold=True, color=ACENTO)
+        ws.cell(f, 6, d.get("descripcion", "")).font = F_NORMAL
+        ws.cell(f, 7, d.get("contraparte", "")).font = F_NORMAL
+        ws.cell(f, 8, d.get("tipo", "")).font = F_NORMAL
         # El detalle de la cobertura explica por qué no hace falta actuar;
         # si no está cubierto, la nota de partida entre meses es la pista.
         detalle = d.get("cobertura_detalle") or d.get("nota", "")
-        nota = ws.cell(f, 8, detalle)
+        nota = ws.cell(f, 9, detalle)
         nota.font = Font(name="Calibri", size=9, color=AMBAR if cobertura == "ninguna" else "6B7885")
         nota.alignment = Alignment(wrap_text=True, vertical="center")
         f += 1
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:H{max(f - 1, 1)}"
+    ws.auto_filter.ref = f"A1:I{max(f - 1, 1)}"
 
 
 # ---------------------------------------------------------------------

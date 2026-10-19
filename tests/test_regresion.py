@@ -94,3 +94,18 @@ def test_galicia_junio_cerrado_aceptando_la_sugerencia():
     st = r["estadisticas"]
     assert st["diferencia_final"] == pytest.approx(-7.00, abs=0.01)
     assert st["sin_justificar"] == 0
+
+
+def test_cargar_los_ajustes_posibles_cierra_la_conciliacion():
+    """La columna "Ajuste posible" tiene que traer el signo correcto: si se
+    cargan los de todos los movimientos sin justificar, BBVA junio cierra
+    en cero. Incluye los dos casos de signo: movimientos del banco (mismo
+    signo) y del libro (signo contrario)."""
+    r = conciliar_mes("bbva", "junio")
+    pendientes = [d for d in r["discrepancias"] if d["cobertura"] == "ninguna"]
+    assert {d["origen"] for d in pendientes} == {"BANCO", "CRM"}
+
+    ajustes = [ajuste(d["descripcion"], d["ajuste_posible"]) for d in pendientes]
+    st = conciliar_mes("bbva", "junio", ajustes_manuales=ajustes)["estadisticas"]
+    assert st["diferencia_final"] == pytest.approx(0.00, abs=0.01)
+    assert st["sin_justificar"] == 0

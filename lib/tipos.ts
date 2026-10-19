@@ -50,6 +50,8 @@ export interface Discrepancia {
   /** Cómo queda cubierto este movimiento pese a no tener pareja individual. */
   cobertura: "agrupada" | "ajuste" | "ninguna";
   cobertura_detalle: string;
+  /** Ajuste que habría que cargar para explicar este movimiento, con su signo. */
+  ajuste_posible: number;
   cruza_meses?: boolean;
   nota?: string;
 }

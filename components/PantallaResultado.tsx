@@ -212,12 +212,17 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.83rem" }}>
             <thead>
               <tr>
-                {["Estado", "Origen", "Fecha", "Monto", "Descripción", "Tipo"].map((h, i) => (
+                {["Estado", "Origen", "Fecha", "Monto", "Ajuste posible", "Descripción", "Tipo"].map((h, i) => (
                   <th
                     key={h}
                     className="etiqueta"
+                    title={
+                      h === "Ajuste posible"
+                        ? "El ajuste que habría que cargar para explicar el movimiento, con el signo ya resuelto"
+                        : undefined
+                    }
                     style={{
-                      textAlign: i === 3 ? "right" : "left",
+                      textAlign: i === 3 || i === 4 ? "right" : "left",
                       padding: "0.4rem 0.5rem",
                       borderBottom: "1px solid var(--borde-fuerte)",
                       position: "sticky",
@@ -259,6 +264,19 @@ function TablaDiscrepancias({ discrepancias }: { discrepancias: Discrepancia[] }
                     }}
                   >
                     {pesosConSigno(d.monto)}
+                  </td>
+                  <td
+                    className="cifra"
+                    style={{
+                      padding: "0.42rem 0.5rem",
+                      textAlign: "right",
+                      fontFamily: "var(--font-mono)",
+                      whiteSpace: "nowrap",
+                      fontWeight: 600,
+                      color: "var(--acento)",
+                    }}
+                  >
+                    {d.cobertura === "ninguna" ? pesosConSigno(d.ajuste_posible) : "—"}
                   </td>
                   <td style={{ padding: "0.42rem 0.5rem", color: "var(--tinta-media)" }}>
                     {d.descripcion || "—"}

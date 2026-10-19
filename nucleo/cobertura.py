@@ -51,6 +51,9 @@ def clasificar_cobertura(discrepancias, ajustes_manuales=None, banco_obj=None):
     _marcar_grupo_gastos(discrepancias, banco_obj)
     _marcar_cubiertos_por_ajustes(discrepancias, ajustes_manuales)
 
+    for d in discrepancias:
+        d["ajuste_posible"] = ajuste_que_lo_explica(d)
+
     agrupados = [d for d in discrepancias if d["cobertura"] == "agrupada"]
     ajustados = [d for d in discrepancias if d["cobertura"] == "ajuste"]
     sin_cubrir = [d for d in discrepancias if d["cobertura"] == "ninguna"]
@@ -63,6 +66,25 @@ def clasificar_cobertura(discrepancias, ajustes_manuales=None, banco_obj=None):
         "sin_justificar": len(sin_cubrir),
         "sin_justificar_monto": round(sum(d["monto"] for d in sin_cubrir), 2),
     }
+
+
+def ajuste_que_lo_explica(discrepancia):
+    """
+    El ajuste que habría que cargar para explicar este movimiento, con su
+    signo ya resuelto.
+
+    La conciliación calcula: saldo del libro + ajustes = saldo del banco.
+      - Un movimiento que está en el LIBRO y no en el banco se neutraliza
+        con el signo contrario (una comisión de -400.500 registrada en el
+        libro pero cobrada otro mes se ajusta con +400.500).
+      - Uno que está en el BANCO y no en el libro se ajusta con el mismo
+        signo (una comisión de -27.732,11 que el libro no tiene, -27.732,11).
+      - La diferencia de gastos es la de los cargos del banco contra el
+        asiento, así que va con el mismo signo.
+    """
+    monto = float(discrepancia.get("monto", 0) or 0)
+    ajuste = -monto if discrepancia.get("origen") == "CRM" else monto
+    return round(ajuste, 2) + 0.0
 
 
 def _es_gasto_bancario(discrepancia, banco_obj):

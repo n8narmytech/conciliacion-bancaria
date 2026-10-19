@@ -179,3 +179,13 @@ def test_un_ajuste_por_la_diferencia_entera_sigue_funcionando():
     linea = _linea_gastos(disc)
     assert linea["cobertura"] == "ajuste"
     assert "Diferencia de gastos" in linea["cobertura_detalle"]
+
+
+def test_ajuste_posible_tiene_el_signo_resuelto():
+    del_libro = movimiento("CRM", -400_500.00, 60, "- Proveedores")
+    del_banco = movimiento("BANCO", -27_732.11, 61, "COMIS NOMINAC DESP IMPORT")
+    cobro_del_libro = movimiento("CRM", 72_913.43, 62, "RcM X")
+    clasificar_cobertura([del_libro, del_banco, cobro_del_libro])
+    assert del_libro["ajuste_posible"] == 400_500.00       # libro: signo contrario
+    assert del_banco["ajuste_posible"] == -27_732.11       # banco: mismo signo
+    assert cobro_del_libro["ajuste_posible"] == -72_913.43
