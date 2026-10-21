@@ -842,6 +842,23 @@ def _detectar_dif_gs_bancarios(banco_df, crm_df):
     }
 
 
+# Los mismos gastos, con los códigos que usa el extracto de Interbanking
+# (la descripción empieza por el código de operación):
+#   IMPUESTO AL DEBITO / CREDITO, AJUSTE IMPUESTO  → Ley 25.413 ("LEY NRO 25")
+#   RRSIRCREB                                       → SIRCREB ("REG REC SIRC")
+#   IVA 21%                                         → "IVA TASA"
+#   C.MANT.CTA                                      → "COM.MANT"
+#   COM.EM.CCI, COM.GE.CFU                          → "COMISION ..."
+#   NOTA DB PERC.CABA                               → "PERC.CABA"
+# "NOTA DB" a secas no: también se usa para débitos de haberes. Y el débito
+# de seguros ("SEGUROS OG - DEBITO") tampoco es gasto, igual que en net cash.
+PATRONES_GASTO_INTERBANKING = [
+    "IMPUESTO AL DEBITO", "IMPUESTO AL CREDITO", "AJUSTE IMPUESTO",
+    "RRSIRCREB", "IVA 21%", "C.MANT.CTA", "COM.EM.CCI", "COM.GE.CFU",
+    "NOTA DB PERC.CABA",
+]
+
+
 def _es_gasto_bancario_bbva(desc):
     """
     Identifica si un movimiento del banco es un gasto bancario según el
@@ -852,13 +869,14 @@ def _es_gasto_bancario_bbva(desc):
         - PERC.CABA, PERCEPCION
         - REG REC SIRC (retención SIRCREB)
         - OG - DEBITO ... CONS.AP (caso especial)
+    Y sus equivalentes en el formato Interbanking (ver arriba).
     """
     desc = str(desc).upper().strip()
     patrones_inicio = [
         "COMISION TRA", "COMISION ", "COM.MANT", "COM.TRANS", "COM.TRANSF",
         "IMPUESTO LEY", "IMP.LEY", "IVA TASA", "LEY NRO 25", "LEY 25",
         "PERC.CABA", "PERCEPCION", "REG REC SIRC",
-    ]
+    ] + PATRONES_GASTO_INTERBANKING
     # CONS.AP es un caso especial (no matchea con "starts with")
     if "OG - DEBITO" in desc and "CONS.AP" in desc:
         return True

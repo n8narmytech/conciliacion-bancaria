@@ -283,7 +283,15 @@ def _marcar_grupo_gastos(discrepancias, banco_obj):
     if not gastos or not agrupadores:
         return
 
-    suma_gastos = sum(d["monto"] for d in gastos)
+    # Los cargos con fecha de otro mes (el extracto de Interbanking trae los
+    # impuestos que el banco imputa al primer día hábil del mes siguiente)
+    # van en el asiento de ese otro mes. No cuentan para decidir si el grupo
+    # se reconoce; sí forman parte de la diferencia, donde se muestran como
+    # "Fecha de otro mes".
+    periodo = _mes_mayoritario(gastos)
+    de_otro_mes = [d for d in gastos if periodo and _mes_de(d) != periodo]
+    del_mes = [d for d in gastos if d not in de_otro_mes]
+    suma_gastos = sum(d["monto"] for d in del_mes)
 
     # 1. Qué asientos agrupadores corresponden a estos cargos
     usados = _mejor_combinacion(agrupadores, suma_gastos)
@@ -292,8 +300,8 @@ def _marcar_grupo_gastos(discrepancias, banco_obj):
 
     # 2. Si no alcanza, apartar el cargo que sobra
     apartado = None
-    if abs(residuo) > _umbral(suma_asientos):
-        candidato = min(gastos, key=lambda d: abs(residuo - d["monto"]))
+    if abs(residuo) > _umbral(suma_asientos) and del_mes:
+        candidato = min(del_mes, key=lambda d: abs(residuo - d["monto"]))
         if abs(residuo - candidato["monto"]) <= _umbral(suma_asientos):
             apartado = candidato
             residuo -= candidato["monto"]
@@ -301,6 +309,8 @@ def _marcar_grupo_gastos(discrepancias, banco_obj):
     # 3. ¿Se reconoce el grupo?
     if abs(residuo) > _umbral(suma_asientos):
         return
+
+    residuo += sum(d["monto"] for d in de_otro_mes)
 
     compensados = [d for d in gastos if d is not apartado]
     detalle = (
