@@ -35,16 +35,7 @@ from bancos import obtener_banco
 from conciliacion import clasificar_huerfanos
 from nucleo.reporte import generar_reporte_excel
 from nucleo.cobertura import clasificar_cobertura
-
-
-class ErrorDeValidacion(Exception):
-    """
-    Problema con los archivos que se subieron, no con el sistema.
-
-    El mensaje está escrito para quien está conciliando y se muestra tal
-    cual en la pantalla, sin el detalle técnico que acompaña a los errores
-    inesperados.
-    """
+from nucleo.errores import ErrorDeValidacion
 
 
 def ejecutar_conciliacion(

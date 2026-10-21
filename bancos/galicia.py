@@ -25,6 +25,7 @@ Construido y validado con datos reales de mayo y junio 2026.
 import pandas as pd
 
 from bancos.base import Banco
+from nucleo.errores import ErrorDeValidacion
 from nucleo.utilidades import leer_excel, normalizar_texto, parse_monto
 
 
@@ -72,6 +73,16 @@ class Galicia(Banco):
         inicial del período no viene explícito: se deriva restándole al
         saldo de la primera fila el monto de ese mismo movimiento.
         """
+        if not _es_formato_office(path):
+            if _es_formato_interbanking(path):
+                return _cargar_interbanking(path)
+            raise ErrorDeValidacion(
+                "El extracto de Galicia no tiene un formato conocido. Tiene que "
+                "descargarse desde Galicia Office (hoja \"Movimientos\") o desde "
+                "Interbanking (\"Extracto de Cuenta\"). Verificá también que hayas "
+                "elegido el banco correcto."
+            )
+
         df = _leer_hoja_movimientos(path)
         df = df.dropna(how="all").reset_index(drop=True)
 
@@ -189,6 +200,73 @@ class Galicia(Banco):
 # =====================================================================
 # HELPERS DE LECTURA
 # =====================================================================
+# =====================================================================
+# FORMATO INTERBANKING
+# =====================================================================
+# Galicia también se puede descargar desde Interbanking, con el mismo
+# formato que usa Santander ("Extracto de Cuenta": una columna Importe con
+# signo, el código de operación y los saldos inicial y final informados).
+# La lectura es idéntica; lo único propio de Galicia es reconocer los
+# gastos bancarios, porque Interbanking no trae el "Grupo de Conceptos" de
+# Galicia Office y hay que deducirlo del código.
+
+# Código de Interbanking → grupo de conceptos de Galicia Office.
+CODIGOS_IMPUESTOS = ("IMPUESTO AL DEBITO", "IMPUESTO AL CREDITO", "ING.BRUTOS",
+                     "IIBBPERCEP", "IVA PERCEP", "IVA")
+MESES = ("ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO",
+         "SEPTIEMBRE", "SETIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE")
+
+
+def _es_formato_office(path):
+    try:
+        return HOJA_MOVIMIENTOS in pd.ExcelFile(path).sheet_names
+    except Exception:
+        return False
+
+
+def _es_formato_interbanking(path):
+    try:
+        primeras = leer_excel(path, header=None).head(20).astype(str)
+    except Exception:
+        return False
+    texto = " ".join(primeras.values.ravel())
+    return "Extracto de Cuenta" in texto and "Concepto/Cod.Op." in texto
+
+
+def _cargar_interbanking(path):
+    from bancos.santander import Santander  # mismo formato Interbanking
+
+    out = Santander().cargar_extracto(path)
+    out["grupo_concepto"] = out["descripcion_orig"].apply(_grupo_por_codigo)
+    out.attrs["formato"] = "galicia_interbanking"
+    return out
+
+
+def _grupo_por_codigo(descripcion):
+    """
+    El grupo de conceptos que Galicia Office le daría a este movimiento,
+    deducido del código de Interbanking (el comienzo de la descripción).
+
+      - Impuestos: Ley 25.413, SIRCREB, IVA y percepciones.
+      - Comisiones: la comisión mensual de servicio de cuenta, que viene con
+        código DEBITOS y como descripción el período ("Junio 2026"). Los
+        DEBITOS con otra descripción (suscripciones a FIMA) no son gastos.
+
+    Lo que no se reconoce queda sin grupo: no se compensa contra el asiento
+    de gastos y aparece a la vista, en vez de esconderse.
+    """
+    texto = str(descripcion).upper().strip()
+    if texto.startswith(CODIGOS_IMPUESTOS):
+        return "Impuestos"
+    if "COMISION" in texto:
+        return "Comisiones"
+    if texto.startswith("DEBITOS "):
+        resto = texto[len("DEBITOS "):].split()
+        if len(resto) == 2 and resto[0] in MESES and resto[1].isdigit():
+            return "Comisiones"
+    return ""
+
+
 def _leer_hoja_movimientos(path):
     """
     Lee la hoja de movimientos del extracto de Galicia.
