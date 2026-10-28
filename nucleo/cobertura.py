@@ -169,11 +169,12 @@ def _componer_diferencia_de_gastos(discrepancias):
                 if resto > 0 else
                 f"Faltan {_pesos(abs(resto))} en el asiento que no se pudieron atribuir a un cargo"
             ),
-            "marca": "Del mes anterior" if 0 < resto <= SOBRANTE_MAXIMO else "Sin identificar",
+            "marca": "Del mes anterior" if resto > 0 else "Sin identificar",
             "nota": (
-                "Probablemente un cargo del extracto anterior con fecha de este mes "
-                "(por ejemplo, del día 1) que se sumó a este asiento."
-                if 0 < resto <= SOBRANTE_MAXIMO else
+                "Probablemente cargos que vinieron en el extracto anterior con fecha "
+                "de este mes (Interbanking trae los del primer día hábil del mes "
+                "siguiente) y que se sumaron a este asiento."
+                if resto > 0 else
                 "Compará la lista del asiento con los cargos del extracto."
             ),
             "ajuste_posible": resto,
@@ -306,10 +307,12 @@ def _marcar_grupo_gastos(discrepancias, banco_obj):
             apartado = candidato
             residuo -= candidato["monto"]
 
-    # 3. ¿Se reconoce el grupo?
-    if abs(residuo) > _umbral(suma_asientos):
-        return
-
+    # 3. El grupo se compensa siempre. Antes, si la diferencia superaba el
+    # 1% del asiento, no se compensaba nada y quedaban cientos de cargos
+    # sueltos (BBVA agosto 2026: 256 cargos y el asiento, por 1.024.060,65
+    # que eran cargos del extracto de julio con fecha de agosto). Ahora la
+    # diferencia, sea del tamaño que sea, queda en una sola línea con su
+    # desplegable, que muestra de qué se compone.
     residuo += sum(d["monto"] for d in de_otro_mes)
 
     compensados = [d for d in gastos if d is not apartado]

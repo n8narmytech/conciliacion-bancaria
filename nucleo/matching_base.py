@@ -242,12 +242,28 @@ def pasada_3_uno_contra_varios(crm, banco, matches,
             and otro.at[j, "fecha"] is not None
             and dias_diff(otro.at[j, "fecha"], fecha) <= dias_tolerancia
         ]
-        if len(candidatos) < 2 or len(candidatos) > MAX_CANDIDATOS_GRUPO:
+        if len(candidatos) < 2:
             continue
 
-        soluciones = _combinaciones_que_suman(
-            [(j, otro.at[j, "monto"]) for j in candidatos], objetivo, hasta=2
-        )
+        soluciones = []
+        if len(candidatos) <= MAX_CANDIDATOS_GRUPO:
+            soluciones = _combinaciones_que_suman(
+                [(j, otro.at[j, "monto"]) for j in candidatos], objetivo, hasta=2
+            )
+        if len(soluciones) != 1:
+            # Grupos de más de cuatro: todos los movimientos de un mismo día y
+            # un mismo concepto que suman exacto el objetivo (BBVA agosto 2026:
+            # un asiento de 606.047,42 contra 9 pagos a ARCA del 03/08).
+            # Sin el piso del 1%: acá no se eligen partes, se toma el grupo
+            # entero del día, así que no hay riesgo de sumar por casualidad.
+            del_dia = [
+                j for j in otro.index
+                if otro.at[j, "estado"] == "pendiente"
+                and (otro.at[j, "monto"] > 0) == (objetivo > 0)
+                and otro.at[j, "fecha"] is not None
+                and dias_diff(otro.at[j, "fecha"], fecha) <= dias_tolerancia
+            ]
+            soluciones = _grupos_completos_que_suman(otro, del_dia, objetivo)
         if len(soluciones) != 1:
             continue
 
@@ -335,3 +351,33 @@ def _combinaciones_que_suman(items, objetivo, hasta=2):
                         return encontradas
 
     return encontradas
+
+
+def _grupos_completos_que_suman(df, candidatos, objetivo):
+    """
+    Grupos formados por TODOS los candidatos de un mismo día y un mismo
+    concepto (la primera palabra de la descripción) cuya suma es el
+    objetivo, con hasta 1 centavo de diferencia.
+
+    Complementa la búsqueda de combinaciones, que llega hasta cuatro
+    partes: acá no se eligen partes, se toma el grupo entero, así que no hay
+    combinatoria ni riesgo de armar una suma por casualidad con montos
+    sueltos. Devuelve una lista de grupos; solo se usa si hay uno.
+    """
+    from collections import defaultdict
+
+    if "descripcion_orig" not in df.columns:
+        return []
+    grupos = defaultdict(list)
+    for j in candidatos:
+        partes = str(df.at[j, "descripcion_orig"]).split()
+        concepto = partes[0].upper() if partes else ""
+        if concepto:
+            grupos[(df.at[j, "fecha"], concepto)].append(j)
+
+    objetivo_c = round(abs(objetivo) * 100)
+    return [
+        tuple(js) for js in grupos.values()
+        if len(js) > MAX_PARTES_GRUPO
+        and abs(round(abs(sum(df.at[j, "monto"] for j in js)) * 100) - objetivo_c) <= 1
+    ]

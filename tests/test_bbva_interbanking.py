@@ -18,7 +18,8 @@ from tests.ayudas import ajuste, conciliar, ruta
     ("COM.GE.CFU 34281130 COMISION GESTI", True),
     ("NOTA DB PERC.CABA ING.", True),
     ("NOTA DB 99999999 OG-DEB./CRED.H", False),   # débito de haberes
-    ("SEGUROS OG - DEBITO DI", False),
+    ("SEGUROS OG - DEBITO DI", True),
+    ("C.TR.AU.FO 11111111 FE-COMIS. TRAN", True),
     ("SUELDOS 99999999 OG-DEBITO", False),
     ("FDO.COM.IN 71 OPER. FDO.COMU", False),
     # BBVA net cash, sin cambios
@@ -41,10 +42,12 @@ def test_julio_desde_interbanking():
     r = conciliar("bbva", mayor, extracto)
     assert r["error"] is None, r["error"]
     pendientes = [d for d in r["discrepancias"] if d["cobertura"] == "ninguna"]
-    assert len(pendientes) == 4
+    # Sueldos y nota DB del aguinaldo, y la diferencia de gastos. El seguro
+    # entra en el grupo: contabilidad lo suma al asiento.
+    assert len(pendientes) == 3
 
     linea = next(d for d in pendientes if d["origen"] == "GRUPO")
-    assert linea["monto"] == pytest.approx(-1_020_182.38, abs=0.01)
+    assert linea["monto"] == pytest.approx(-1_020_802.88, abs=0.01)
     marcas = [c["marca"] for c in linea["componentes"]]
     assert marcas.count("Fecha de otro mes") == 10
     assert sum(c["monto"] for c in linea["componentes"]) == pytest.approx(linea["monto"], abs=0.01)
@@ -53,3 +56,29 @@ def test_julio_desde_interbanking():
     st = conciliar("bbva", mayor, extracto, ajustes_manuales=[
         ajuste(d["descripcion"], d["ajuste_posible"]) for d in pendientes])["estadisticas"]
     assert st["diferencia_final"] == pytest.approx(0.00, abs=0.01)
+
+
+@pytest.mark.datos
+def test_agosto_los_gastos_quedan_en_una_sola_linea():
+    """Agosto dejaba 271 movimientos sin justificar, casi todos gastos: el
+    asiento "- Proveedores" incluía los cargos del 03/08 que Interbanking
+    había traído en el extracto de julio, la diferencia superaba el 1% y el
+    grupo no se compensaba. Ahora se compensa siempre y la diferencia queda
+    en una línea: los cargos de septiembre y 1.023.290,15 "del mes
+    anterior", que son exactamente los cargos del 03/08 del extracto de julio."""
+    mayor, extracto = ruta("BBVA/AGOSTO/BBVA GBP 08.2026.xls"), ruta("BBVA/AGOSTO/BBVA INTERBANKING 08.2026.xlsx")
+    r = conciliar("bbva", mayor, extracto)
+    assert r["error"] is None, r["error"]
+    pendientes = [d for d in r["discrepancias"] if d["cobertura"] == "ninguna"]
+    assert len(pendientes) == 3   # la línea de gastos y un par de transferencias que se cancela
+
+    linea = next(d for d in pendientes if d["origen"] == "GRUPO")
+    del_mes_anterior = [c for c in linea["componentes"] if c["marca"] == "Del mes anterior"]
+    assert del_mes_anterior[0]["monto"] == pytest.approx(1_023_290.15, abs=0.01)
+
+    # Los 9 pagos a ARCA del 03/08 se emparejan con su asiento único.
+    assert any(m["tipo"] == "Uno contra varios (1 libro ↔ 9 banco)" for m in r["matches"])
+
+    st = conciliar("bbva", mayor, extracto, ajustes_manuales=[
+        ajuste(d["descripcion"], d["ajuste_posible"]) for d in pendientes])["estadisticas"]
+    assert abs(st["diferencia_final"]) <= 1500

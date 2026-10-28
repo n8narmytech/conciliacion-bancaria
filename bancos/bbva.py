@@ -848,14 +848,16 @@ def _detectar_dif_gs_bancarios(banco_df, crm_df):
 #   RRSIRCREB                                       → SIRCREB ("REG REC SIRC")
 #   IVA 21%                                         → "IVA TASA"
 #   C.MANT.CTA                                      → "COM.MANT"
-#   COM.EM.CCI, COM.GE.CFU                          → "COMISION ..."
+#   COM.EM.CCI, COM.GE.CFU, C.TR.AU.FO              → "COMISION ..."
 #   NOTA DB PERC.CABA                               → "PERC.CABA"
-# "NOTA DB" a secas no: también se usa para débitos de haberes. Y el débito
-# de seguros ("SEGUROS OG - DEBITO") tampoco es gasto, igual que en net cash.
+#   SEGUROS                                         → seguro de la cuenta
+# "NOTA DB" a secas no: también se usa para débitos de haberes.
+# El seguro se incluye porque contabilidad lo suma al asiento de gastos
+# (confirmado en julio y agosto 2026: sin él, el asiento no cuadra).
 PATRONES_GASTO_INTERBANKING = [
     "IMPUESTO AL DEBITO", "IMPUESTO AL CREDITO", "AJUSTE IMPUESTO",
     "RRSIRCREB", "IVA 21%", "C.MANT.CTA", "COM.EM.CCI", "COM.GE.CFU",
-    "NOTA DB PERC.CABA",
+    "C.TR.AU.FO", "NOTA DB PERC.CABA", "SEGUROS",
 ]
 
 

@@ -79,13 +79,16 @@ def test_residuo_chico_queda_como_una_sola_linea():
     assert pendientes[0]["monto"] == pytest.approx(640.50, abs=0.01)
 
 
-def test_residuo_grande_no_se_compensa():
-    # Más del 1% de diferencia no es redondeo: se deja todo a la vista.
+def test_residuo_grande_tambien_se_compensa_y_queda_en_una_linea():
+    # BBVA agosto: el asiento tenía 1M más que los cargos (cargos del extracto
+    # anterior). Antes se dejaban todos sueltos; ahora va a la línea de diferencia.
     disc = [cargo(-100_000, 1), cargo(-200_000, 2), cargo(-300_000, 3), asiento_proveedores(-700_000, 50)]
     resumen = clasificar_cobertura(disc)
-    assert resumen["cubiertos_agrupados"] == 0
-    assert resumen["sin_justificar"] == 4
-    assert all(d["origen"] != "GRUPO" for d in disc)
+    assert resumen["cubiertos_agrupados"] == 4
+    pendientes = _por_estado(disc, "ninguna")
+    assert len(pendientes) == 1 and pendientes[0]["origen"] == "GRUPO"
+    assert pendientes[0]["monto"] == pytest.approx(100_000, abs=0.01)
+    assert pendientes[0]["componentes"][0]["marca"] == "Del mes anterior"
 
 
 # --- Ajustes cargados -------------------------------------------------

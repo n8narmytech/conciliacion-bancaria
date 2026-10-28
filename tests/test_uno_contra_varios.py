@@ -81,3 +81,28 @@ def test_no_toca_lo_ya_emparejado():
 def test_la_busqueda_cuenta_bien_las_combinaciones():
     items = [("a", 10.0), ("b", 20.0), ("c", 30.0), ("d", 40.0)]
     assert sorted(map(sorted, _combinaciones_que_suman(items, 60.0, hasta=99))) == [["a", "b", "c"], ["b", "d"]]
+
+
+def _movs_con_descripcion(*filas):
+    """filas: (fecha, monto, descripcion)"""
+    return pd.DataFrame([{"fecha": f, "monto": m, "descripcion_orig": d, "estado": "pendiente", "match_id": None}
+                         for f, m, d in filas])
+
+
+def test_un_asiento_contra_todos_los_pagos_del_dia_del_mismo_concepto():
+    # BBVA agosto: un asiento contra 9 pagos a ARCA del mismo día, algunos muy chicos.
+    montos = [456_776.28, 57_437.69, 24_114.11, 20_695.91, 19_487.83, 19_081.18, 5_080.01, 1_795.83, 1_578.58]
+    libro = _movs_con_descripcion((D, -sum(montos), "Op X"))
+    banco = _movs_con_descripcion(*[(D, -m, "PAGO DE LAS OBLIGACIONES TRIBUTARIAS ARCA") for m in montos],
+                                  (D, -300.00, "COMISION TRA"))
+    m = _correr(libro, banco)
+    assert len(m) == 1 and len(m[0]["i_bco_lista"]) == 9
+    assert banco.iloc[-1]["estado"] == "pendiente"
+
+
+def test_el_grupo_del_dia_tiene_que_ser_completo():
+    # Si sobra un pago del mismo concepto ese día, no se arma el grupo.
+    montos = [100.0, 200.0, 300.0, 400.0, 500.0]
+    libro = _movs_con_descripcion((D, -1_500.0, "Op X"))
+    banco = _movs_con_descripcion(*[(D, -m, "PAGO ARCA") for m in montos + [50.0]])
+    assert _correr(libro, banco) == []
