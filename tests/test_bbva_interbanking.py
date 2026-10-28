@@ -17,6 +17,7 @@ from tests.ayudas import ajuste, conciliar, ruta
     ("COM.EM.CCI 11111111 COMISION TRANS", True),
     ("COM.GE.CFU 34281130 COMISION GESTI", True),
     ("NOTA DB PERC.CABA ING.", True),
+    ("NOTA DB COM.TRANSFEREN", True),
     ("NOTA DB 99999999 OG-DEB./CRED.H", False),   # débito de haberes
     ("SEGUROS OG - DEBITO DI", True),
     ("C.TR.AU.FO 11111111 FE-COMIS. TRAN", True),

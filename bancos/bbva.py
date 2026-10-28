@@ -850,6 +850,7 @@ def _detectar_dif_gs_bancarios(banco_df, crm_df):
 #   C.MANT.CTA                                      → "COM.MANT"
 #   COM.EM.CCI, COM.GE.CFU, C.TR.AU.FO              → "COMISION ..."
 #   NOTA DB PERC.CABA                               → "PERC.CABA"
+#   NOTA DB COM.TRANSFEREN                          → "COMISION TRA"
 #   SEGUROS                                         → seguro de la cuenta
 # "NOTA DB" a secas no: también se usa para débitos de haberes.
 # El seguro se incluye porque contabilidad lo suma al asiento de gastos
@@ -857,7 +858,7 @@ def _detectar_dif_gs_bancarios(banco_df, crm_df):
 PATRONES_GASTO_INTERBANKING = [
     "IMPUESTO AL DEBITO", "IMPUESTO AL CREDITO", "AJUSTE IMPUESTO",
     "RRSIRCREB", "IVA 21%", "C.MANT.CTA", "COM.EM.CCI", "COM.GE.CFU",
-    "C.TR.AU.FO", "NOTA DB PERC.CABA", "SEGUROS",
+    "C.TR.AU.FO", "NOTA DB PERC.CABA", "NOTA DB COM.", "SEGUROS",
 ]
 
 
